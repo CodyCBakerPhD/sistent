@@ -103,7 +103,9 @@ def normalize_text(text: str) -> str:
 
 _RE_ANCHOR_ID = re.compile(r"\s*\{#[^}]*\}\s*$")
 _RE_TRAILING_HASHES = re.compile(r"\s+#+\s*$")
-_RE_NUMBERING = re.compile(r"^\s*(?:\d+(?:\.\d+)*[.):]?|[ivxlc]+[.):])\s+", re.I)
+# Numeric numbering ("1", "2.3", "4)") or a small roman numeral ("IV.", "ix)") that is followed by punctuation.
+# Only i/v/x are accepted so that words such as "CLI:" or "CI:" are not mistaken for numbering.
+_RE_NUMBERING = re.compile(r"^\s*(?:\d+(?:\.\d+)*[.):]?|(?=[ivx])x{0,3}(?:ix|iv|v?i{0,3})[.):])\s+", re.I)
 _RE_STEP = re.compile(r"^\s*step\s+\d+\s*[:.\-\u2013\u2014]\s*", re.I)
 _RE_SHORTCODE = re.compile(r":[a-z0-9_+-]+:")
 
@@ -338,14 +340,15 @@ class Substituter:
             self.applied.add(match.group(0))
             return f"{ORG}/{NAME}"
 
+        # Longer, more specific patterns first: "org/name" slugs and user variables may themselves contain an alias.
         if self._slug_re is not None:
             text = self._slug_re.sub(replace_slug, text)
+        for key, pattern in self._extra:
+            text = pattern.sub("{{" + key + "}}", text)
         if self._name_re is not None:
             text = self._name_re.sub(replace_name, text)
         if self._org_re is not None:
             text = self._org_re.sub(ORG, text)
-        for key, pattern in self._extra:
-            text = pattern.sub("{{" + key + "}}", text)
         if self._branch_re is not None:
             text = self._branch_re.sub(lambda m: m.group("pre") + BRANCH, text)
         return text
