@@ -1,0 +1,14 @@
+# Dogfood configuration: sistent is the main repo, tests/fixtures/example-repo is a deliberately drifted satellite.
+# Run `sistent check` from the repository root.
+
+[sistent]
+main = "sistent"
+fail_on = "never"
+
+[repos.sistent]
+path = "."
+tags = ["python"]
+
+[repos.example]
+path = "tests/fixtures/example-repo"
+tags = ["python"]
