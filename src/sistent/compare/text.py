@@ -306,7 +306,7 @@ class Substituter:
         branch = own.branch or ""
         self._branch_re = (
             re.compile(
-                r"(?P<pre>/blob/|/tree/|/raw/|/en/|branch=|version=|ref=|\.git@|(?<![A-Za-z0-9])@)"
+                r"(?P<pre>/blob/|/tree/|/raw/|/en/|branch=|version=|ref=|\.git@|@)"
                 rf"(?:{re.escape(branch)})(?![A-Za-z0-9._-])",
                 re.IGNORECASE,
             )

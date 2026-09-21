@@ -236,8 +236,12 @@ def extract_all(
     with ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
         results = list(pool.map(_one, jobs_list))
 
+    # main first: an aspect whose main snapshot failed is skipped for every repo, so satellite results are dropped
+    results.sort(key=lambda item: not item[2])
     for resolved, aspect, is_main, result in results:
         name = resolved.spec.name
+        if not is_main and aspect.name in out.skipped_aspects:
+            continue
         if isinstance(result, Snapshot):
             out.snapshots[(name, aspect.name)] = result
             continue

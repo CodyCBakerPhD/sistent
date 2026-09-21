@@ -19,10 +19,11 @@ import click
 from sistent import __version__, api
 from sistent.baseline import BaselineError
 from sistent.config import Config, ConfigError, default_config_text, dump_config, find_config, load_config
-from sistent.model import Severity
+from sistent.model import Severity, Snapshot
 from sistent.options import describe_options
 from sistent.registry import Registry, RegistryError, default_registry
 from sistent.render import RenderOptions, render
+from sistent.repository import Repository
 
 EXIT_USAGE = 2
 EXIT_PARTIAL = 3
@@ -45,9 +46,9 @@ def _fail(message: str, code: int = EXIT_USAGE) -> NoReturn:
     sys.exit(code)
 
 
-def _load(state: State, *, registry: Registry | None = None) -> Config:
+def _load(state: State, *, registry: Registry | None = None, config_path: Path | None = None) -> Config:
     try:
-        path = find_config(state.config_path)
+        path = find_config(config_path or state.config_path)
         return load_config(path, registry=registry)
     except (ConfigError, RegistryError) as exc:
         _fail(str(exc))
@@ -66,6 +67,21 @@ def _want_color(no_color: bool) -> bool:
     return sys.stdout.isatty()
 
 
+_CONFIG_HELP = "Config file (default: $SISTENT_CONFIG, else sistent.toml searched upward from the current directory)."
+
+
+def config_option(command: Any) -> Any:
+    """``-c/--config`` on a sub-command (the group accepts it too)."""
+    return click.option(
+        "-c",
+        "--config",
+        "config_path",
+        type=click.Path(path_type=Path, dir_okay=False),
+        default=None,
+        help=_CONFIG_HELP,
+    )(command)
+
+
 # ----- group -------------------------------------------------------------------------------------------------------
 
 
@@ -77,7 +93,7 @@ def _want_color(no_color: bool) -> bool:
     "config_path",
     type=click.Path(path_type=Path, dir_okay=False),
     default=None,
-    help="Config file (default: $SISTENT_CONFIG, else sistent.toml searched upward from the current directory).",
+    help=_CONFIG_HELP,
 )
 @click.option("-q", "--quiet", is_flag=True, help="No progress output on stderr.")
 @click.option("-v", "--verbose", count=True, help="-v cites the option behind each finding; -vv adds tracebacks.")
@@ -92,6 +108,7 @@ def main(ctx: click.Context, config_path: Path | None, quiet: bool, verbose: int
 
 
 @main.command()
+@config_option
 @click.option("--format", "fmt", type=click.Choice(["text", "markdown", "json"]), default="text", show_default=True)
 @click.option("-o", "--output", type=click.Path(path_type=Path, dir_okay=False), default=None, help="Write to FILE.")
 @click.option("--aspect", "aspects", multiple=True, help="Only these aspects (glob, repeatable).")
@@ -127,6 +144,7 @@ def main(ctx: click.Context, config_path: Path | None, quiet: bool, verbose: int
 @click.pass_obj
 def check(
     state: State,
+    config_path: Path | None,
     fmt: str,
     output: Path | None,
     aspects: tuple[str, ...],
@@ -156,7 +174,7 @@ def check(
     3 one or more satellites unavailable (others are still reported).
     """
     registry = _registry()
-    config = _load(state, registry=registry)
+    config = _load(state, registry=registry, config_path=config_path)
     options = api.RunOptions(
         fetch=not no_fetch,
         jobs=jobs,
@@ -205,16 +223,25 @@ def _emit(text: str, output: Path | None) -> None:
 
 
 @main.command()
+@config_option
 @click.argument("repo")
 @click.option("--aspect", "aspects", multiple=True, help="Only these aspects (glob, repeatable).")
 @click.option("--format", "fmt", type=click.Choice(["json", "text"]), default="json", show_default=True)
 @click.option("--explain", is_flag=True, help="Include applied aliases, ignored sections and stale hits.")
 @click.option("--no-fetch", is_flag=True, envvar="SISTENT_NO_FETCH", help="Use cached clones only.")
 @click.pass_obj
-def snapshot(state: State, repo: str, aspects: tuple[str, ...], fmt: str, explain: bool, no_fetch: bool) -> None:
+def snapshot(
+    state: State,
+    config_path: Path | None,
+    repo: str,
+    aspects: tuple[str, ...],
+    fmt: str,
+    explain: bool,
+    no_fetch: bool,
+) -> None:
     """Print the normalised snapshot(s) extracted from REPO (what the comparison actually sees)."""
     registry = _registry()
-    config = _load(state, registry=registry)
+    config = _load(state, registry=registry, config_path=config_path)
     try:
         snapshots, errors = api.extract_snapshots(
             config, repos=[repo], aspects=aspects, registry=registry, fetch=not no_fetch, progress=state.progress
@@ -245,16 +272,25 @@ def _aspect_rank(config: Config, name: str) -> int:
 
 
 @main.command()
+@config_option
 @click.argument("repo")
 @click.argument("repo2", required=False)
 @click.option("--aspect", "aspects", multiple=True, help="Only these aspects (glob, repeatable).")
 @click.option("--raw", is_flag=True, help="Diff the source files instead of the normalised snapshots.")
 @click.option("--no-fetch", is_flag=True, envvar="SISTENT_NO_FETCH", help="Use cached clones only.")
 @click.pass_obj
-def diff(state: State, repo: str, repo2: str | None, aspects: tuple[str, ...], raw: bool, no_fetch: bool) -> None:
+def diff(
+    state: State,
+    config_path: Path | None,
+    repo: str,
+    repo2: str | None,
+    aspects: tuple[str, ...],
+    raw: bool,
+    no_fetch: bool,
+) -> None:
     """Unified diff of main's normalised snapshot against REPO's (or REPO against REPO2)."""
     registry = _registry()
-    config = _load(state, registry=registry)
+    config = _load(state, registry=registry, config_path=config_path)
     left, right = (repo, repo2) if repo2 else (config.main, repo)
     try:
         snapshots, errors = api.extract_snapshots(
@@ -288,8 +324,8 @@ def _raw_diff(
     config: Config,
     left: str,
     right: str,
-    a: Any,
-    b: Any,
+    a: Snapshot | None,
+    b: Snapshot | None,
     *,
     no_fetch: bool,
     progress: Callable[[str], None],
@@ -313,7 +349,7 @@ def _raw_diff(
     return out
 
 
-def _read_lines(repo: Any, rel: str) -> list[str]:
+def _read_lines(repo: Repository | None, rel: str) -> list[str]:
     if repo is None or not repo.exists(rel):
         return []
     return repo.read_text(rel).splitlines()
@@ -323,11 +359,12 @@ def _read_lines(repo: Any, rel: str) -> list[str]:
 
 
 @main.command()
+@config_option
 @click.option("--fetch", is_flag=True, help="Materialise url repos before listing (default: cache only).")
 @click.pass_obj
-def repos(state: State, fetch: bool) -> None:
+def repos(state: State, config_path: Path | None, fetch: bool) -> None:
     """List configured repositories, their sources, resolved paths, revisions and identity aliases."""
-    config = _load(state, registry=_registry())
+    config = _load(state, registry=_registry(), config_path=config_path)
     statuses = api.repo_statuses(config, fetch=fetch, progress=state.progress)
     rows = [("repo", "source", "status", "head", "tags", "aliases")]
     for s in statuses:
@@ -342,11 +379,12 @@ def repos(state: State, fetch: bool) -> None:
 
 
 @main.command()
+@config_option
 @click.option("--repo", "names", multiple=True, help="Only these repos (repeatable).")
 @click.pass_obj
-def fetch(state: State, names: tuple[str, ...]) -> None:
+def fetch(state: State, config_path: Path | None, names: tuple[str, ...]) -> None:
     """Clone or update the url repositories into the cache without checking anything."""
-    config = _load(state, registry=_registry())
+    config = _load(state, registry=_registry(), config_path=config_path)
     specs = [s for s in config.repos.values() if s.url and (not names or s.name in names)]
     unknown = [n for n in names if n not in config.repos]
     if unknown:
@@ -410,10 +448,11 @@ def aspects_cmd(state: State, type_name: str | None) -> None:
 
 
 @main.command("config")
+@config_option
 @click.pass_obj
-def config_cmd(state: State) -> None:
+def config_cmd(state: State, config_path: Path | None) -> None:
     """Print the fully resolved configuration as TOML (`# default` marks inherited values)."""
-    config = _load(state, registry=_registry())
+    config = _load(state, registry=_registry(), config_path=config_path)
     click.echo(dump_config(config), nl=False)
 
 

@@ -312,7 +312,10 @@ _REMOTE_RE = re.compile(
 
 def parse_remote(url: str) -> tuple[str, str, str] | None:
     """``(host, org, repo)`` from an https/ssh/scp-style git URL, or ``None``."""
-    m = _REMOTE_RE.match(url.strip())
+    stripped = url.strip()
+    if stripped.lower().startswith("file:") or ("://" not in stripped and ":" not in stripped):
+        return None  # local paths and file:// urls carry no org/host identity
+    m = _REMOTE_RE.match(stripped)
     if not m:
         return None
     host = m.group("host1") or m.group("host2")

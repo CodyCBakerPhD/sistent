@@ -192,6 +192,11 @@ def _footer(report: Report, options: RenderOptions) -> list[str]:
         for finding in unlisted:
             tag = "suppressed" if finding.suppressed else "baselined"
             out.append(f"  [{tag}] {finding.repo}  {finding.kind.value}  {finding.locator}")
+    if report.baseline_stale:
+        out.append(
+            f"{_plural(len(report.baseline_stale), 'baseline entry').replace('entrys', 'entries')} no longer "
+            "produced; run --update-baseline to drop them"
+        )
     return out
 
 
