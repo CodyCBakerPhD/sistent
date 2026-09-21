@@ -346,6 +346,8 @@ class Report:
     exit_reason: str
     snapshots: dict[tuple[str, str], Snapshot] = field(default_factory=dict, compare=False)
     """``(repo, aspect) -> snapshot``; not serialised into the JSON report."""
+    baseline_stale: tuple[str, ...] = ()
+    """Baseline entries whose finding id was not produced by this run."""
     schema_version: int = SCHEMA_VERSION
 
     # ----- convenience views -------------------------------------------------------------------------------------
@@ -421,6 +423,7 @@ class Report:
             "findings": [f.to_dict() for f in self.findings],
             "candidates": [c.to_dict() for c in self.candidates],
             "errors": [e.to_dict() for e in self.errors],
+            "baseline_stale": list(self.baseline_stale),
         }
 
 

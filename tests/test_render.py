@@ -770,6 +770,7 @@ class TestJson:
             "findings",
             "candidates",
             "errors",
+            "baseline_stale",
         ]
         assert doc["schema_version"] == 1
         assert doc["fail_on"] == "error"

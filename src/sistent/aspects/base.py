@@ -149,6 +149,7 @@ class Aspect(ABC):
         for key in keys:
             if key in self.default_severity:
                 return Severity.parse(self.default_severity[key])
+        for key in keys:
             if key in DEFAULT_SUBJECT_SEVERITY:
                 return DEFAULT_SUBJECT_SEVERITY[key]
         return DEFAULT_SEVERITY[kind]
