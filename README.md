@@ -235,7 +235,7 @@ from sistent.config import load_config
 report = run(load_config("sistent.toml"), options=RunOptions(fetch=False))
 for finding in report.visible_findings:
     print(finding.repo, finding.severity, finding.locator, finding.message)
-print(report.candidates)      # upstream findings aggregated across satellites
+print(report.candidates)  # upstream findings aggregated across satellites
 ```
 
 ## Writing your own aspect type
@@ -246,9 +246,11 @@ from sistent.model import Kind, Subject, locator
 from sistent.options import BaseOptions
 from dataclasses import dataclass, field
 
+
 @dataclass(frozen=True, kw_only=True)
 class SphinxOptions(BaseOptions):
     file: str = field(default="docs/conf.py", metadata={"help": "Sphinx configuration file."})
+
 
 class SphinxConfAspect(Aspect):
     type_name = "sphinx"
@@ -262,9 +264,14 @@ class SphinxConfAspect(Aspect):
     def compare(self, main, other):
         missing = set(main.data["extensions"]) - set(other.data["extensions"])
         return [
-            self.finding(repo=other.repo, kind=Kind.MISSING, subject=Subject.VALUE,
-                         locator=locator(self.options.file, "extensions", sep=":"),
-                         message=f"extension missing: {ext}", content_key=ext)
+            self.finding(
+                repo=other.repo,
+                kind=Kind.MISSING,
+                subject=Subject.VALUE,
+                locator=locator(self.options.file, "extensions", sep=":"),
+                message=f"extension missing: {ext}",
+                content_key=ext,
+            )
             for ext in sorted(missing)
         ]
 ```
