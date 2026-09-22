@@ -44,7 +44,8 @@ def write_files(root: Path, files: Mapping[str, str | bytes]) -> None:
         if isinstance(content, bytes):
             target.write_bytes(content)
         else:
-            target.write_text(content, encoding="utf-8")
+            with open(target, "w", encoding="utf-8", newline="\n") as handle:
+                handle.write(content)
 
 
 def git(*args: str, cwd: Path) -> str:

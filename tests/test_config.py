@@ -254,7 +254,7 @@ def test_relative_path_resolves_against_config_directory(
     assert config.repos["a"].path == nested / "../../checkouts/a"
     assert config.repos["a"].path is not None
     assert config.repos["a"].path.is_absolute()
-    assert config.repos["b"].path == Path("/abs/b")
+    assert config.repos["b"].path == Path("/abs/b").absolute()
 
 
 def test_path_expands_user_and_env(
@@ -262,13 +262,14 @@ def test_path_expands_user_and_env(
 ) -> None:
     monkeypatch.setenv("FLEET", "/srv/fleet")
     monkeypatch.setenv("HOME", "/home/someone")
+    monkeypatch.setenv("USERPROFILE", "/home/someone")
     config = load(
         '[sistent]\nmain = "a"\nbaseline = "base.json"\n[repos.a]\npath = "$FLEET/a"\n[repos.b]\npath = "~/b"\n',
         make_config,
         registry,
     )
-    assert config.repos["a"].path == Path("/srv/fleet/a")
-    assert config.repos["b"].path == Path("/home/someone/b")
+    assert config.repos["a"].path == Path("/srv/fleet/a").absolute()
+    assert config.repos["b"].path == Path("/home/someone/b").absolute()
     assert config.baseline == config.directory / "base.json"
 
 
@@ -394,7 +395,7 @@ def test_sistent_values(make_config: MakeConfig, registry: Registry, tmp_path: P
     assert config.jobs == 2
     assert config.defaults is False
     assert config.stale is False
-    assert config.baseline == Path("/tmp/base.json")
+    assert config.baseline == Path("/tmp/base.json").absolute()
     assert config.aspects == ()
 
 
@@ -409,6 +410,7 @@ def test_cache_dir_default_and_expansion(
     text = '[sistent]\nmain = "a"\n[repos.a]\nurl = "o/a"\n'
     monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
     assert load(text, make_config, registry).cache_dir == tmp_path / "home" / ".cache" / "sistent"
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg"))
     assert load(text, make_config, registry).cache_dir == tmp_path / "xdg" / "sistent"

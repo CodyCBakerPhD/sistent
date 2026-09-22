@@ -15,6 +15,8 @@ behaviour.
 - `src/sistent/config.py`, `registry.py`, `sources/` — configuration loading, aspect-type registry, git materialisation.
 - `src/sistent/api.py` — the pipeline; `cli.py` — the click layer; `render/` — text/markdown/json reports.
 - `tests/` mirrors `src/`; `tests/fixtures/real/` holds README/AGENTS files of public scientific Python repos.
+- `docs/inconsistencies.md` is the catalogue of every case the tool reports, per aspect, with the finding it emits and
+  the option that tunes it. Update it whenever a finding is added or changed (`tests/test_docs.py` checks coverage).
 
 ## Development
 

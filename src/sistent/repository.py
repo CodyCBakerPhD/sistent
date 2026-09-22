@@ -22,6 +22,23 @@ from sistent.model import Identity
 
 _SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
 _MIN_ALIAS = 4
+_NOT_PACKAGES = frozenset(
+    {
+        "tests",
+        "test",
+        "testing",
+        "docs",
+        "doc",
+        "examples",
+        "example",
+        "scripts",
+        "tools",
+        "benchmarks",
+        "build",
+        "dist",
+    }
+)
+"""Directory names that carry an ``__init__.py`` in many repos without being the importable package."""
 
 
 @dataclass(frozen=True)
@@ -76,10 +93,10 @@ class Repository:
         return self.path(rel).read_bytes()
 
     def read_text(self, rel: str, *, errors: str = "replace") -> str:
-        """UTF-8 text with a BOM stripped; memoised per path."""
+        """UTF-8 text with a BOM stripped and CRLF line endings normalised to LF; memoised per path."""
         cached = self._text_cache.get(rel)
         if cached is None:
-            cached = self.read_bytes(rel).decode("utf-8", errors=errors).lstrip("﻿")
+            cached = self.read_bytes(rel).decode("utf-8", errors=errors).lstrip("﻿").replace("\r\n", "\n")
             self._text_cache[rel] = cached
         return cached
 
@@ -284,10 +301,15 @@ def _import_packages(repo: Repository, tool: dict[str, Any], variants: Sequence[
             continue
         try:
             for child in sorted(base_path.iterdir()):
-                if child.is_dir() and (child / "__init__.py").exists() and not child.name.startswith("."):
-                    candidates.append(child.name)
+                name = child.name
+                if name.startswith(".") or name.casefold() in _NOT_PACKAGES:
+                    continue
+                if child.is_dir() and (child / "__init__.py").exists():
+                    candidates.append(name)
         except OSError:
             continue
+        if candidates:
+            break  # a src/ layout never has import packages at the root as well
     if len(candidates) > 3:
         folded = {v.casefold() for v in variants}
         candidates = [c for c in candidates if c.casefold() in folded]

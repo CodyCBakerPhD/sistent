@@ -27,7 +27,10 @@ def spec(name: str = "sat", **kwargs: Any) -> RepoSpec:
 
 def bare_path(url: str) -> Path:
     assert url.startswith("file://")
-    return Path(url[len("file://") :])
+    from urllib.parse import urlparse
+    from urllib.request import url2pathname
+
+    return Path(url2pathname(urlparse(url).path))
 
 
 def head_of(repo: Repository) -> str:

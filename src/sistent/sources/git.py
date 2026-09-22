@@ -2,25 +2,30 @@
 
 Each ``(url, rev)`` pair gets its own checkout under ``cache_dir`` (see :func:`cache_key`). A new checkout is built
 in ``<dir>.tmp`` and renamed into place only after the fetch and checkout succeeded, so an interrupted run never
-leaves a half-built directory behind. A per-checkout ``<dir>.lock`` file (``fcntl.flock``; a no-op where ``fcntl``
-is unavailable) serialises concurrent materialisation of the same key.
+leaves a half-built directory behind. A per-checkout ``<dir>.lock`` file (``fcntl.flock`` on POSIX,
+``msvcrt.locking`` on Windows, plus a per-path thread lock) serialises concurrent materialisation of the same key.
 """
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import os
 import re
 import shutil
 import subprocess
 import sys
+import threading
+import time
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 
 from sistent.repository import parse_remote
 
-if sys.platform != "win32":
+if sys.platform == "win32":
+    import msvcrt
+else:
     import fcntl
 
 GIT_ENV: dict[str, str] = {"GIT_TERMINAL_PROMPT": "0", "GIT_LFS_SKIP_SMUDGE": "1"}
@@ -160,18 +165,41 @@ def _stderr(proc: subprocess.CompletedProcess[str]) -> str:
     return text.splitlines()[-1] if text else f"exit status {proc.returncode}"
 
 
+_THREAD_LOCKS: dict[str, threading.Lock] = {}
+_THREAD_LOCKS_GUARD = threading.Lock()
+
+
 @contextmanager
 def _locked(lock_path: Path) -> Iterator[None]:
-    """Hold an exclusive advisory lock on ``lock_path`` (no-op where ``fcntl`` is unavailable)."""
-    if sys.platform == "win32":
-        yield
-        return
-    with open(lock_path, "a", encoding="utf-8") as handle:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+    """Hold an exclusive lock on ``lock_path``: per-path within this process, advisory file lock across processes."""
+    with _THREAD_LOCKS_GUARD:
+        local = _THREAD_LOCKS.setdefault(str(lock_path), threading.Lock())
+    with local, open(lock_path, "a+", encoding="utf-8") as handle:
+        _file_lock(handle.fileno())
         try:
             yield
         finally:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            _file_unlock(handle.fileno())
+
+
+def _file_lock(fd: int) -> None:
+    if sys.platform == "win32":
+        while True:
+            try:
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                return
+            except OSError:
+                time.sleep(0.1)
+    else:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+
+
+def _file_unlock(fd: int) -> None:
+    if sys.platform == "win32":
+        with contextlib.suppress(OSError):
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+    else:
+        fcntl.flock(fd, fcntl.LOCK_UN)
 
 
 __all__ = ["GIT_ENV", "SourceError", "cache_key", "git_available", "materialise"]
