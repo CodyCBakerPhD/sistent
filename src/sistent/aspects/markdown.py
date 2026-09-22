@@ -1205,7 +1205,8 @@ class MarkdownAspect(Aspect):
                         kind=Kind.DIFFERS,
                         subject=Subject.SECTION,
                         locator=node.locator,
-                        message=f"duplicate heading: {_RE_DUPLICATE.sub('', node.display[-1])} appears more than once",
+                        message=f"duplicate heading: {_RE_DUPLICATE.sub('', node.display[-1])} appears more than once "
+                        f"(normalised path '{_RE_DUPLICATE.sub('', node.joined)}')",
                         content_key=node.leaf,
                         severity=Severity.INFO,
                     )
