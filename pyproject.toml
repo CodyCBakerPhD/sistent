@@ -1,0 +1,93 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sistent"
+version = "0.1.0"
+description = "Keep a fleet of repositories consistent with one main repository: agent instructions, READMEs, layout, packaging and CI."
+readme = "README.md"
+license = "BSD-3-Clause"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+authors = [{ name = "Cody Baker" }]
+keywords = ["consistency", "AGENTS.md", "CLAUDE.md", "repositories", "lint", "fleet"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Quality Assurance",
+]
+dependencies = [
+    "click>=8.1",
+    "pyyaml>=6",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+    "mypy>=1.10",
+    "types-PyYAML",
+]
+
+[project.urls]
+Homepage = "https://github.com/CodyCBakerPhD/sistent"
+Issues = "https://github.com/CodyCBakerPhD/sistent/issues"
+
+[project.scripts]
+sistent = "sistent.cli:main"
+
+# Built-in aspect types are registered through the same entry-point group that third-party plugins use,
+# so the plugin path is exercised on every install.
+[project.entry-points."sistent.aspects"]
+markdown = "sistent.aspects.markdown:MarkdownAspect"
+badges = "sistent.aspects.badges:BadgesAspect"
+tree = "sistent.aspects.tree:TreeAspect"
+files = "sistent.aspects.files:FilesAspect"
+toml = "sistent.aspects.toml:TomlAspect"
+workflows = "sistent.aspects.workflows:WorkflowsAspect"
+precommit = "sistent.aspects.precommit:PrecommitAspect"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sistent"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/sistent", "tests", "README.md", "AGENTS.md", "LICENSE", "sistent.toml"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "RUF", "PIE", "PT", "RET"]
+ignore = [
+    "RUF012", # mutable class attributes are fine for ClassVar defaults
+    "SIM108", # ternary is not always clearer
+    "RET505", # else after return is sometimes clearer
+    "PT011",  # broad pytest.raises is fine with a match=
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+filterwarnings = ["error"]
+markers = ["git: requires the git executable"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["src/sistent"]
+strict = true
+warn_unreachable = true
