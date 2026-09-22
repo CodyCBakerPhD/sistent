@@ -182,7 +182,7 @@ class TestProbePyproject:
             "docs/__init__.py": "",
             "examples/__init__.py": "",
         }
-        assert self.probe(tmp_path, files) == ["rootpkg"]
+        assert set(self.probe(tmp_path, files)) == {"rootpkg"}
 
     def test_more_than_three_candidates_keeps_only_name_matches(self, tmp_path: Path) -> None:
         files = {
