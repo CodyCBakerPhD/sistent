@@ -87,6 +87,9 @@ your main checkout and its siblings:
 sistent init --from ../neuroconv --repos '../*/'
 ```
 
+The complete, case-by-case list of what is reported (with the finding each case produces and the option that tunes
+it) is in [`docs/inconsistencies.md`](docs/inconsistencies.md).
+
 ## Concepts
 
 | Term | Meaning |

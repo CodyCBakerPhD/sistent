@@ -332,7 +332,7 @@ def _parse_repo(name: str, table: Any, *, directory: Path, github: str | None) -
     root: str = table.get("root", ".")
     if not root.strip():
         root = "."
-    if Path(root).is_absolute():
+    if Path(root).is_absolute() or root.startswith(("/", "\\")):
         raise ConfigError(f"{where}.root: must be a sub-directory relative to the checkout, got {root!r}")
     return RepoSpec(
         name=name,

@@ -171,7 +171,18 @@ class TestProbePyproject:
             ".hidden/__init__.py": "",
             "docs/conf.py": "",
         }
-        assert self.probe(tmp_path, files) == ["roi-extractors", "roi_extractors", "roiextractors", "rootpkg"]
+        # a src/ layout wins: root-level packages are not scanned as well
+        assert self.probe(tmp_path, files) == ["roi-extractors", "roi_extractors", "roiextractors"]
+
+    def test_root_layout_skips_conventional_non_packages(self, tmp_path: Path) -> None:
+        files = {
+            "pyproject.toml": pyproject("rootpkg"),
+            "rootpkg/__init__.py": "",
+            "tests/__init__.py": "",
+            "docs/__init__.py": "",
+            "examples/__init__.py": "",
+        }
+        assert self.probe(tmp_path, files) == ["rootpkg"]
 
     def test_more_than_three_candidates_keeps_only_name_matches(self, tmp_path: Path) -> None:
         files = {
