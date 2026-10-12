@@ -196,7 +196,7 @@ class TestOptions:
         agents = default_options("agent_instructions")
         assert agents.merge is True
         assert agents.default_mode == "full"
-        assert agents.severity == {"missing.file": "error"}
+        assert agents.severity == {}  # the global default already makes a missing instruction file an error
         readme = default_options("readme")
         assert readme.default_mode == "presence"
         assert readme.heading_order is True
@@ -997,3 +997,34 @@ class TestRealFixtures:
         }
         assert a.self_check(main) == []
         assert a.self_check(other) == []
+
+
+class TestReviewRegressions:
+    def test_numbered_list_turned_into_bullets_is_not_drift(self, make_repo: MakeRepo) -> None:
+        instance = aspect()
+        main = instance.run_extract(
+            make_repo(
+                {"AGENTS.md": "# Agents\n\n## Steps\n\n1. first step\n2. second step\n3. third step\n"}, name="main"
+            )
+        )
+        other = instance.run_extract(
+            make_repo({"AGENTS.md": "# Agents\n\n## Steps\n\n- first step\n- second step\n- third step\n"}, name="sat")
+        )
+        assert instance.compare(main, other) == []
+
+    def test_missing_role_is_a_warning_and_no_file_at_all_an_error(self, make_repo: MakeRepo) -> None:
+        instance = aspect()
+        main = instance.run_extract(
+            make_repo(
+                {"AGENTS.md": "# Agents\n\n## Rules\n\n- a\n", ".github/copilot-instructions.md": "# Copilot\n\n- b\n"},
+                name="main",
+            )
+        )
+        role_missing = instance.run_extract(make_repo({"AGENTS.md": "# Agents\n\n## Rules\n\n- a\n"}, name="sat"))
+        found = [f for f in instance.compare(main, role_missing) if f.subject is Subject.FILE]
+        assert [(f.kind, f.severity, f.locator) for f in found] == [
+            (Kind.MISSING, Severity.WARNING, ".github/copilot-instructions.md")
+        ]
+        nothing = instance.run_extract(make_repo({"README.md": "x"}, name="bare"))
+        found = instance.compare(main, nothing)
+        assert [(f.kind, f.subject, f.severity) for f in found] == [(Kind.MISSING, Subject.FILE, Severity.ERROR)]

@@ -33,12 +33,11 @@ ignore_sections = ["skills?", "skills? .*", ".* skills?", ".* skills? .*"]
 default_mode = "full"
 similarity_threshold = 0.6
 heading_order = false
-severity = { "missing.file" = "error" }
 
 # README section layout. Package-specific sections are only checked for presence; templated ones for similarity.
 [aspects.readme]
 type = "markdown"
-files = ["README.md"]
+files = ["README.md", "README.rst"]
 merge = false
 ignore_sections = ["table of contents", "contents", "toc"]
 default_mode = "presence"
@@ -49,7 +48,7 @@ heading_order = true
 # README badges (kind, provider and order).
 [aspects.readme_badges]
 type = "badges"
-file = "README.md"
+files = ["README.md", "README.rst"]
 order = true
 
 # Folder layout: directories two levels deep (src/<pkg>), files at the root, plus the .github/ files that other
@@ -64,6 +63,10 @@ ignore = [
     ".git", "__pycache__", "*.egg-info", ".venv", "venv", ".tox", ".nox", "build", "dist", "htmlcov",
     ".mypy_cache", ".ruff_cache", ".pytest_cache", ".idea", ".vscode", "node_modules",
     ".claude/skills", "skills", "SKILL.md",
+    # files that dedicated default aspects already check, so one gap is not reported twice
+    "README.*", "AGENTS.md", "CLAUDE.md", "GEMINI.md", ".cursorrules", ".windsurfrules", ".clinerules",
+    ".github/copilot-instructions.md", "LICENSE*", "COPYING*", "license.*", "CONTRIBUTING.*", "CODE_OF_CONDUCT.*",
+    "SECURITY.*", ".pre-commit-config.yaml", ".gitignore", ".codespell*", "CITATION.cff", "pyproject.toml",
 ]
 
 # Community / policy files: required when main has them; CODE_OF_CONDUCT must match main.

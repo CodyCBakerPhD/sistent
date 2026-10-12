@@ -38,9 +38,12 @@ from sistent.repository import RepoContext
 class BadgesOptions(BaseOptions):
     """Options of the ``badges`` aspect type."""
 
-    file: str = field(
-        default="README.md",
-        metadata={"help": "File whose badges are compared (Markdown, HTML and reStructuredText image syntaxes)."},
+    files: list[str] = field(
+        default_factory=lambda: ["README.md", "README.rst"],
+        metadata={
+            "help": "Candidate files, first present wins; badges are read from Markdown, HTML and reStructuredText "
+            "image syntaxes."
+        },
     )
     order: bool = field(
         default=True,
@@ -377,9 +380,9 @@ class BadgesAspect(Aspect):
         Kinds matching ``ignore_kinds`` are dropped and listed in ``ctx.ignored``.
         """
         options = self.badge_options
-        file = options.file
-        if not ctx.exists(file):
-            return {"present": False, "badges": []}
+        file = next((candidate for candidate in options.files if ctx.exists(candidate)), None)
+        if file is None:
+            return {"present": False, "file": None, "badges": []}
         text = ctx.read_text(file)
         try:
             document = parse_document(text, source=file)
@@ -410,16 +413,19 @@ class BadgesAspect(Aspect):
                     "syntax": image.syntax,
                 }
             )
-        return {"present": True, "badges": records}
+        return {"present": True, "file": file, "badges": records}
 
     def compare(self, main: Snapshot, other: Snapshot) -> list[Finding]:
         """Findings for ``other`` relative to ``main`` (see the module docstring for the rules)."""
         options = self.badge_options
-        file = options.file
+        file = str(main.data.get("file") or other.data.get("file") or options.files[0])
         where = locator(file, "badges")
         repo = other.repo
         main_badges = _badges(main)
         other_badges = _badges(other)
+        # A badge whose parameters still name another configured repo is reported as stale by the orchestrator;
+        # reporting it here again as "differs" would be the same copy-paste leftover twice.
+        stale_aliases = {hit.alias.casefold() for hit in other.stale_hits if hit.where == where}
         if not main.data.get("present"):
             if not other.data.get("present"):
                 return []
@@ -471,6 +477,10 @@ class BadgesAspect(Aspect):
             )
         for mine, theirs in diff.common:
             if _signature(mine) == _signature(theirs):
+                continue
+            if stale_aliases and any(
+                alias in str(param).casefold() for param in theirs.get("params", []) for alias in stale_aliases
+            ):
                 continue
             findings.append(
                 self.finding(

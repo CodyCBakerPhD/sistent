@@ -1005,11 +1005,19 @@ class MarkdownAspect(Aspect):
         other_all: set[str],
         out: list[Finding],
     ) -> None:
+        # A rule that only changed list type (numbered <-> bullet) within the same section is neither missing nor
+        # moved: it is still there. Such rules are dropped from both sides before anything is reported.
+        main_texts = {r.text for r in main.rules} | {r.text for lst in main.ordered for r in lst}
+        other_texts = {r.text for r in other.rules} | {r.text for lst in other.ordered for r in lst}
         diff = diff_sets(main.rules, other.rules, key=lambda r: r.text)
-        self._report_rule_leftovers(repo, main, list(diff.missing), list(diff.extra), main_all, other_all, out)
+        missing = [r for r in diff.missing if r.text not in other_texts]
+        extra = [r for r in diff.extra if r.text not in main_texts]
+        self._report_rule_leftovers(repo, main, missing, extra, main_all, other_all, out)
         for index, (main_list, other_list) in enumerate(zip(main.ordered, other.ordered, strict=False)):
             seq = diff_sequences(main_list, other_list, key=lambda r: r.text)
-            self._report_rule_leftovers(repo, main, list(seq.missing), list(seq.extra), main_all, other_all, out)
+            missing = [r for r in seq.missing if r.text not in other_texts]
+            extra = [r for r in seq.extra if r.text not in main_texts]
+            self._report_rule_leftovers(repo, main, missing, extra, main_all, other_all, out)
             if seq.reordered:
                 out.append(
                     self.finding(
@@ -1024,9 +1032,11 @@ class MarkdownAspect(Aspect):
                     )
                 )
         for main_list in main.ordered[len(other.ordered) :]:
-            self._report_rule_leftovers(repo, main, list(main_list), [], main_all, other_all, out)
+            leftover = [r for r in main_list if r.text not in other_texts]
+            self._report_rule_leftovers(repo, main, leftover, [], main_all, other_all, out)
         for other_list in other.ordered[len(main.ordered) :]:
-            self._report_rule_leftovers(repo, main, [], list(other_list), main_all, other_all, out)
+            leftover = [r for r in other_list if r.text not in main_texts]
+            self._report_rule_leftovers(repo, main, [], leftover, main_all, other_all, out)
 
     def _report_rule_leftovers(
         self,

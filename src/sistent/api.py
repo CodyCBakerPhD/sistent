@@ -34,7 +34,7 @@ from sistent.model import (
     aggregate_candidates,
 )
 from sistent.registry import Registry, default_registry
-from sistent.repository import RepoContext, Repository, build_identity
+from sistent.repository import RepoContext, Repository, build_identity, hint_identity
 from sistent.sources import SourceError, resolve
 
 Progress = Callable[[str], None]
@@ -126,6 +126,12 @@ def select_satellites(config: Config, patterns: Sequence[str] = (), tags: Sequen
         for pattern in patterns:
             if not any(fnmatch.fnmatchcase(n.casefold(), pattern.casefold()) for n in known):
                 raise SelectionError(f"--repo {pattern!r} matches no configured satellite (known: {', '.join(known)})")
+    if tags and not selected:
+        carried = sorted({t for spec in config.satellites for t in spec.tags})
+        raise SelectionError(
+            f"--tag {', '.join(repr(t) for t in tags)} matches no configured satellite "
+            f"(tags in use: {', '.join(carried) or 'none'})"
+        )
     return selected
 
 
@@ -205,21 +211,30 @@ def extract_all(
 
     jobs_list: list[tuple[_Resolved, Aspect, bool]] = []
     for aspect in aspects:
-        if not _targets(aspect, main.spec):
+        targeted = [sat for sat in available if _targets(aspect, sat.spec)]
+        if aspect.name in main.spec.skip_aspects:
+            # main explicitly opts out; that only matters when a satellite would have been compared against it
             out.skipped_aspects.add(aspect.name)
-            out.errors.append(
-                RunError(
-                    stage="extract",
-                    repo=main.spec.name,
-                    aspect=aspect.name,
-                    message=f"aspect {aspect.name!r} is skipped for main ({main.spec.name}); nothing to compare",
+            if targeted:
+                out.errors.append(
+                    RunError(
+                        stage="extract",
+                        repo=main.spec.name,
+                        aspect=aspect.name,
+                        message=(
+                            f"aspect {aspect.name!r} is in [repos.{main.spec.name}].skip_aspects but "
+                            f"{len(targeted)} satellite(s) target it; nothing to compare against"
+                        ),
+                    )
                 )
-            )
             continue
+        if not targeted and not aspect.targets(main.spec.tags):
+            out.skipped_aspects.add(aspect.name)  # no repo carries the aspect's tags: nothing to do
+            continue
+        # Main is extracted whenever any satellite is targeted, whatever main's own tags are.
         jobs_list.append((main, aspect, True))
-        for sat in available:
-            if _targets(aspect, sat.spec):
-                jobs_list.append((sat, aspect, False))
+        for sat in targeted:
+            jobs_list.append((sat, aspect, False))
 
     def _one(job: tuple[_Resolved, Aspect, bool]) -> tuple[_Resolved, Aspect, bool, Snapshot | Exception]:
         resolved, aspect, is_main = job
@@ -484,22 +499,37 @@ def run(
     findings = _order(findings, [main.spec.name, *available_names], [a.name for a in aspects])
     findings = suppress(findings, config, aspects)
 
+    errors = [*extracted.errors, *compare_errors]
+    fail_on = _parse_fail_on(options.fail_on, config)
+    unavailable = [r for r in satellites if not r.ok]
+
+    # A baseline only speaks for the (repo, aspect) pairs this run actually covered: with filters, unavailable
+    # satellites or skipped aspects, entries outside that scope are neither stale nor dropped on --update-baseline.
+    covered: set[tuple[str, str]] | None = None
+    partial = (
+        bool(options.repos or options.aspects or options.tags) or bool(unavailable) or bool(extracted.skipped_aspects)
+    )
+    if partial:
+        covered = set()
+        for aspect in aspects:
+            if aspect.name in extracted.skipped_aspects:
+                continue
+            for resolved_repo in (main, *satellites):
+                if resolved_repo.ok and (resolved_repo is main or _targets(aspect, resolved_repo.spec)):
+                    covered.add((resolved_repo.spec.name, aspect.name))
     baseline_stale: list[str] = []
     baseline_path = options.baseline or config.baseline
     generated_at = now_iso()
     if baseline_path is not None:
+        existing = read_baseline(baseline_path) if baseline_path.exists() else None
         baseline: Baseline | None
         if options.update_baseline:
-            baseline = write_baseline(baseline_path, findings, generated_at=generated_at)
-        elif baseline_path.exists():
-            baseline = read_baseline(baseline_path)
+            baseline = write_baseline(
+                baseline_path, findings, generated_at=generated_at, keep=existing, covered=covered
+            )
         else:
-            baseline = None
-        findings, baseline_stale = apply_baseline(findings, baseline)
-
-    errors = [*extracted.errors, *compare_errors]
-    fail_on = _parse_fail_on(options.fail_on, config)
-    unavailable = [r for r in satellites if not r.ok]
+            baseline = existing
+        findings, baseline_stale = apply_baseline(findings, baseline, covered=covered)
     code, reason = compute_exit(
         findings, errors, fail_on=fail_on, unavailable=len(unavailable), allow_unavailable=options.allow_unavailable
     )
@@ -569,7 +599,14 @@ def extract_snapshots(
     resolved = resolve_repos(config, specs, fetch=fetch, jobs=jobs, progress=progress)
     errors: list[RunError] = []
     snapshots: dict[tuple[str, str], Snapshot] = {}
-    identities = {r.spec.name: r.identity for r in resolved if r.identity is not None}
+    # Stale detection looks for every configured repo's name, as `check` does: probe the others from the cache
+    # (never fetching), and fall back to what the configuration alone says about them.
+    others = [spec for name, spec in config.repos.items() if name not in repos]
+    identities: dict[str, Identity] = {spec.name: hint_identity(spec.hints) for spec in others}
+    for r in resolve_repos(config, others, fetch=False, jobs=jobs) if others else []:
+        if r.identity is not None:
+            identities[r.spec.name] = r.identity
+    identities.update({r.spec.name: r.identity for r in resolved if r.identity is not None})
     for r in resolved:
         if not r.ok:
             errors.append(RunError(stage="resolve", repo=r.spec.name, aspect=None, message=r.error or "unavailable"))

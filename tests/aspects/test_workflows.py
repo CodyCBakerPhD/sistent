@@ -850,11 +850,14 @@ class TestUnparseable:
             wf("ci.yml", triggers=["push"]),
             unparseable={"broken.yml": "mapping values are not allowed here"},
         )
-        findings = aspect().compare(main, other)
+        # the unparseable file is reported by self_check (for main too) and excluded from the workflow matching
+        assert aspect().compare(main, other) == []
+        findings = aspect().self_check(other)
         assert tuples(findings) == {("unparseable", "file", "none", f"{DIR}:broken.yml")}
         assert findings[0].severity is Severity.WARNING
         assert findings[0].detail == "mapping values are not allowed here"
         assert findings[0].detail_kind == "text"
+        assert aspect().self_check(main) == []
 
     def test_unparseable_in_main_is_not_extra_in_satellite(self, make_snapshot: MakeSnapshot) -> None:
         main = snap(make_snapshot, "main", wf("ci.yml", triggers=["push"]), unparseable={"broken.yml": "bad"})
@@ -909,10 +912,33 @@ class TestRoundTrip:
         main = a.run_extract(make_repo({f"{DIR}/ci.yml": CI, f"{DIR}/release.yaml": RELEASE}, name="main-repo"))
         drifted = CI.replace("actions/checkout@v4", "actions/checkout@v3").replace("  pull_request:\n", "")
         other = a.run_extract(make_repo({f"{DIR}/ci.yml": drifted, f"{DIR}/broken.yml": BROKEN}, name="sat-repo"))
+        assert tuples(a.self_check(other)) == {("unparseable", "file", "none", f"{DIR}:broken.yml")}
         assert tuples(a.compare(main, other)) == {
-            ("unparseable", "file", "none", f"{DIR}:broken.yml"),
             ("missing", "workflow", "downstream", f"{DIR}:release.yaml"),
             ("missing", "key", "downstream", f"{DIR}:ci.yml:on.pull_request"),
-            ("missing", "action", "downstream", f"{DIR}:pypa/gh-action-pypi-publish"),
             ("differs", "action", "downstream", f"{DIR}:actions/checkout"),
         }
+
+
+class TestReviewRegressions:
+    def test_yml_and_yaml_spellings_are_the_same_workflow(self, make_snapshot: MakeSnapshot) -> None:
+        main = snap(make_snapshot, "main", wf("ci.yml", name="A", triggers=["push"]))
+        other = snap(make_snapshot, "sat", wf("ci.yaml", name="B", triggers=["push"]))
+        assert tuples(aspect().compare(main, other)) == {("moved", "workflow", "downstream", f"{DIR}:ci.yml")}
+
+    def test_actions_of_a_missing_workflow_are_not_reported_again(self, make_repo: MakeRepo) -> None:
+        a = aspect()
+        main = a.run_extract(make_repo({f"{DIR}/ci.yml": CI, f"{DIR}/release.yaml": RELEASE}, name="main-repo"))
+        other = a.run_extract(make_repo({f"{DIR}/ci.yml": CI}, name="sat-repo"))
+        found = tuples(a.compare(main, other))
+        assert ("missing", "workflow", "downstream", f"{DIR}:release.yaml") in found
+        assert not [t for t in found if t[1] == "action"]
+
+    def test_unparseable_files_in_main_are_reported_by_self_check(self, make_repo: MakeRepo) -> None:
+        a = aspect()
+        main = a.run_extract(make_repo({f"{DIR}/ci.yml": CI, f"{DIR}/broken.yml": BROKEN}, name="main-repo"))
+        other = a.run_extract(make_repo({f"{DIR}/ci.yml": CI, f"{DIR}/broken.yml": RELEASE}, name="sat-repo"))
+        assert tuples(a.self_check(main)) == {("unparseable", "file", "none", f"{DIR}:broken.yml")}
+        assert a.self_check(main)[0].repo == "main-repo"
+        # the satellite's parseable counterpart yields no workflow or action findings
+        assert a.compare(main, other) == []

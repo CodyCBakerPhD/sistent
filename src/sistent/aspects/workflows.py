@@ -180,30 +180,20 @@ class WorkflowsAspect(Aspect):
 
         main_bad: Mapping[str, str] = main.data.get("unparseable", {})
         other_bad: Mapping[str, str] = other.data.get("unparseable", {})
-        for file, reason in sorted(other_bad.items()):
-            out.append(
-                self.finding(
-                    repo=repo,
-                    kind=Kind.UNPARSEABLE,
-                    subject=Subject.FILE,
-                    locator=locator(directory, file, sep=":"),
-                    message=f"cannot parse workflow {file}: {reason}",
-                    detail=reason,
-                    detail_kind="text",
-                )
-            )
-        # A file that is unparseable on one side is neither missing nor extra on the other.
+        # Unparseable files are reported by self_check (for main too); here a file that is unparseable on one side
+        # is neither missing nor extra on the other.
         main_workflows: list[Workflow] = [w for w in main.data.get("workflows", []) if w["file"] not in other_bad]
         other_workflows: list[Workflow] = [w for w in other.data.get("workflows", []) if w["file"] not in main_bad]
 
         by_file: Callable[[Workflow], Hashable | None] = lambda w: w["file"]  # noqa: E731
+        by_stem: Callable[[Workflow], Hashable | None] = lambda w: equivalent_file(w["file"])  # noqa: E731
         by_name: Callable[[Workflow], Hashable | None] = lambda w: normalised_name(w.get("name"))  # noqa: E731
-        matches = match_by_keys(main_workflows, other_workflows, keys=[by_file, by_name])
+        matches = match_by_keys(main_workflows, other_workflows, keys=[by_file, by_stem, by_name])
         pairs: list[tuple[Workflow, Workflow, int]] = list(matches.pairs)
         left_main = list(matches.unmatched_main)
         left_other = list(matches.unmatched_other)
         for main_workflow, other_workflow in heuristic_pairs(left_main, left_other):
-            pairs.append((main_workflow, other_workflow, 2))
+            pairs.append((main_workflow, other_workflow, 3))
             left_main.remove(main_workflow)
             left_other.remove(other_workflow)
 
@@ -251,8 +241,31 @@ class WorkflowsAspect(Aspect):
                     repo, main_workflow, other_workflow, main_all=set(main_actions), other_all=set(other_actions)
                 )
             )
-        out.extend(self._compare_actions(repo, main_actions, other_actions))
+        # Only actions used by workflows that exist (and parse) on both sides can be missing or extra; actions
+        # that disappeared together with a whole workflow are covered by that workflow's finding.
+        main_scoped = {a for w, _, _ in pairs for job in w["jobs"].values() for a in job_actions(job)}
+        other_scoped = {a for _, w, _ in pairs for job in w["jobs"].values() for a in job_actions(job)}
+        out.extend(
+            self._compare_actions(repo, main_actions, other_actions, main_scoped=main_scoped, other_scoped=other_scoped)
+        )
         return out
+
+    def self_check(self, snap: Snapshot) -> list[Finding]:
+        """Workflow files that could not be parsed, reported for every repository (main included)."""
+        bad: Mapping[str, str] = snap.data.get("unparseable", {})
+        return [
+            self.finding(
+                repo=snap.repo,
+                kind=Kind.UNPARSEABLE,
+                subject=Subject.FILE,
+                locator=locator(self.directory, file, sep=":"),
+                message=f"cannot parse workflow {file}: {reason}",
+                detail=reason,
+                detail_kind="text",
+                content_key=file,
+            )
+            for file, reason in sorted(bad.items())
+        ]
 
     def _compare_workflow(
         self,
@@ -423,12 +436,20 @@ class WorkflowsAspect(Aspect):
         return out
 
     def _compare_actions(
-        self, repo: str, main_actions: Mapping[str, list[str]], other_actions: Mapping[str, list[str]]
+        self,
+        repo: str,
+        main_actions: Mapping[str, list[str]],
+        other_actions: Mapping[str, list[str]],
+        *,
+        main_scoped: set[str],
+        other_scoped: set[str],
     ) -> list[Finding]:
         directory = self.directory
         out: list[Finding] = []
         diff = diff_sets(list(main_actions), list(other_actions))
         for action in diff.missing:
+            if action not in main_scoped:
+                continue
             out.append(
                 self.finding(
                     repo=repo,
@@ -441,6 +462,8 @@ class WorkflowsAspect(Aspect):
                 )
             )
         for action in diff.extra:
+            if action not in other_scoped:
+                continue
             out.append(
                 self.finding(
                     repo=repo,
@@ -508,6 +531,12 @@ def matrix_axes(strategy: Any) -> dict[str, list[str]]:
     if not isinstance(matrix, Mapping):
         return {}
     return {str(axis): sorted(set(as_str_list(values))) for axis, values in matrix.items() if axis not in _MATRIX_META}
+
+
+def equivalent_file(file: str) -> str:
+    """Workflow file name key that ignores case and the ``.yaml``/``.yml`` spelling."""
+    folded = file.casefold()
+    return folded[: -len(".yaml")] + ".yml" if folded.endswith(".yaml") else folded
 
 
 def is_local(action: str) -> bool:

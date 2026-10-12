@@ -52,7 +52,7 @@ class MarkdownOptions(BaseOptions):
 
 @dataclass(frozen=True, kw_only=True)
 class BadgesOptions(BaseOptions):
-    file: str = "README.md"
+    files: list[str] = field(default_factory=list)
     order: bool = True
 
 
@@ -431,7 +431,7 @@ def test_default_aspect_tables_are_fresh_copies_in_default_order() -> None:
     assert list(tables) == list(DEFAULT_ASPECT_NAMES)
     assert all(table["type"] in BUILTIN for table in tables.values())
     tables["readme"]["files"].append("mutated")
-    assert default_aspect_tables()["readme"]["files"] == ["README.md"]
+    assert default_aspect_tables()["readme"]["files"] == ["README.md", "README.rst"]
 
 
 def test_merge_overrides_keep_other_default_keys() -> None:
@@ -442,7 +442,7 @@ def test_merge_overrides_keep_other_default_keys() -> None:
     readme = resolved["readme"]
     assert readme["similarity_threshold"] == 0.5
     assert readme["tags"] == ["python"]
-    assert readme["files"] == ["README.md"]
+    assert readme["files"] == ["README.md", "README.rst"]
     assert readme["type"] == "markdown"
     assert inherited["readme"] == frozenset(default_aspect_tables()["readme"]) - {"similarity_threshold"}
     assert "tags" not in inherited["readme"]
@@ -566,7 +566,7 @@ def test_loaded_aspects_override_and_extend(make_config: MakeConfig, registry: R
 
 def test_defaults_false_yields_only_user_aspects(make_config: MakeConfig, registry: Registry) -> None:
     config = load(
-        '[sistent]\nmain = "a"\ndefaults = false\n[repos.a]\nurl = "o/a"\n[aspects.only]\ntype = "badges"\nfile = "R.md"\n',
+        '[sistent]\nmain = "a"\ndefaults = false\n[repos.a]\nurl = "o/a"\n[aspects.only]\ntype = "badges"\nfiles = ["R.md"]\n',
         make_config,
         registry,
     )
@@ -873,3 +873,9 @@ def test_aspect_spec_and_repo_spec_are_frozen() -> None:
     )
     with pytest.raises(dataclasses.FrozenInstanceError):
         aspect.name = "y"  # type: ignore[misc]
+
+
+@pytest.mark.parametrize("root", ["..", "../other", "pkg/../../other"])
+def test_root_may_not_escape_the_checkout(make_config: MakeConfig, registry: Registry, root: str) -> None:
+    with pytest.raises(ConfigError, match=r"\[repos\.b\]\.root: must be a sub-directory"):
+        load(MINIMAL + f'[repos.b]\nurl = "o/b"\nroot = "{root}"\n', make_config, registry)

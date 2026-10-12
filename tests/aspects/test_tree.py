@@ -33,7 +33,7 @@ LAYOUT_FILES: dict[str, str] = {
 
 LAYOUT_DATA: dict[str, list[str]] = {
     "dirs": [".github/", ".github/workflows/", "docs/", "src/", "src/{{name}}/", "tests/"],
-    "files": [".github/dependabot.yml", "README.md", "pyproject.toml"],
+    "files": [".github/dependabot.yml"],  # README.md and pyproject.toml are left to their dedicated aspects
 }
 
 
@@ -148,12 +148,12 @@ class TestExtract:
         data = layout().extract(ctx)
         assert data == {
             "dirs": ["src/", "src/{{name}}/", "{{name}}_utils/"],
-            "files": ["pyproject.toml", "{{name}}.toml"],
+            "files": ["{{name}}.toml"],
         }
 
     def test_without_substitution(self, make_repo: MakeRepo) -> None:
         ctx = make_repo({"pyproject.toml": PYPROJECT, "src/mypkg/__init__.py": ""}, substitute=False)
-        assert layout().extract(ctx) == {"dirs": ["src/", "src/mypkg/"], "files": ["pyproject.toml"]}
+        assert layout().extract(ctx) == {"dirs": ["src/", "src/mypkg/"], "files": []}
 
     def test_depth_limits_directories(self, make_repo: MakeRepo) -> None:
         ctx = make_repo({"a/b/c/d.txt": "", "top.txt": ""})
@@ -225,7 +225,7 @@ class TestExtract:
             }
         )
         data = layout().extract(ctx)
-        assert data == {"dirs": [".claude/", "src/", "src/pkg/"], "files": ["README.md"]}
+        assert data == {"dirs": [".claude/", "src/", "src/pkg/"], "files": []}
 
     def test_custom_ignore_matches_components_or_paths(self, make_repo: MakeRepo) -> None:
         ctx = make_repo({"a/keep.txt": "", "a/drop/x.txt": "", "b/drop/y.txt": "", "c/d/e.txt": ""})
@@ -262,24 +262,11 @@ class TestExtract:
         assert ctx.repo.is_git
         data = layout().extract(ctx)
         assert data["dirs"] == LAYOUT_DATA["dirs"]
-        assert data["files"] == [
-            ".github/dependabot.yml",
-            ".gitignore",
-            "README.md",
-            "pyproject.toml",
-            "untracked.txt",
-        ]
+        assert data["files"] == [".github/dependabot.yml", "untracked.txt"]
         walked = layout(use_git=False).extract(ctx)
         assert "secrets.txt" in walked["files"]
         assert "generated/" in walked["dirs"]
-        assert walked["files"] == [
-            ".github/dependabot.yml",
-            ".gitignore",
-            "README.md",
-            "pyproject.toml",
-            "secrets.txt",
-            "untracked.txt",
-        ]
+        assert walked["files"] == [".github/dependabot.yml", "secrets.txt", "untracked.txt"]
 
 
 # ----- comparison --------------------------------------------------------------------------------------------------
@@ -413,8 +400,8 @@ class TestCompare:
                 name="sat",
             )
         )
-        assert main.data == {"dirs": ["src/", "src/{{name}}/", "tests/"], "files": ["pyproject.toml"]}
-        assert other.data == {"dirs": ["tests/", "{{name}}/"], "files": ["pyproject.toml"]}
+        assert main.data == {"dirs": ["src/", "src/{{name}}/", "tests/"], "files": []}
+        assert other.data == {"dirs": ["tests/", "{{name}}/"], "files": []}
         assert tuples(aspect.compare(main, other)) == {
             (Kind.MOVED, Subject.PATH, Direction.DOWNSTREAM, "src/{{name}}/"),
             (Kind.MISSING, Subject.PATH, Direction.DOWNSTREAM, "src/"),

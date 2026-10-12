@@ -267,3 +267,43 @@ def test_root_subdirectory_for_path_repo(tmp_path: Path) -> None:
     assert repo.root == (checkout / "pkg").resolve()
     assert repo.checkout == checkout.resolve()
     assert resolve(spec("mono", path=checkout, root="."), cache_dir=tmp_path / "cache").root == checkout.resolve()
+
+
+# ----- refs recorded for the identity probes ------------------------------------------------------------------------
+
+
+@requires_git
+def test_url_repo_without_rev_learns_the_remote_default_branch(bare_git_repo: MakeRemote, tmp_path: Path) -> None:
+    from sistent.repository import RepoHints, build_identity, probe_branch
+
+    url = bare_git_repo({"README.md": "x\n"}, branch="develop")
+    repo = resolve(spec(url=url), cache_dir=tmp_path / "cache")
+    assert probe_branch(repo, RepoHints(name="sat")) == {"branch": "develop"}
+    assert build_identity(repo, RepoHints(name="sat", url=url)).branch == "develop"
+
+
+@requires_git
+def test_tag_rev_is_not_taken_for_a_branch(bare_git_repo: MakeRemote, tmp_path: Path) -> None:
+    from sistent.repository import RepoHints, probe_branch
+
+    url = bare_git_repo({"README.md": "x\n"}, branch="main", tag="v1.0")
+    repo = resolve(spec(url=url, rev="v1.0"), cache_dir=tmp_path / "cache")
+    assert repo.git("show-ref", "--verify", "--quiet", "refs/tags/v1.0") is not None
+    assert probe_branch(repo, RepoHints(name="sat", rev="v1.0")) == {"branch": "main"}
+    branch_repo = resolve(spec(url=url, rev="main"), cache_dir=tmp_path / "cache")
+    assert probe_branch(branch_repo, RepoHints(name="sat", rev="main")) == {"branch": "main"}
+
+
+@requires_git
+def test_corrupt_cached_checkout_is_rebuilt(bare_git_repo: MakeRemote, tmp_path: Path) -> None:
+    import shutil
+
+    url = bare_git_repo({"README.md": "hello\n"})
+    cache = tmp_path / "cache"
+    target = materialise(url, None, cache)
+    shutil.rmtree(target / ".git")
+    (target / "README.md").write_text("tampered")
+    rebuilt = materialise(url, None, cache)
+    assert rebuilt == target
+    assert (rebuilt / ".git").is_dir()
+    assert (rebuilt / "README.md").read_text() == "hello\n"

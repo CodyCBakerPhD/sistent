@@ -210,6 +210,8 @@ class Repository:
                 item = item[len(prefix) :]
             elif prefix:
                 continue
+            if not os.path.lexists(self.root / item):
+                continue  # still in the index but deleted from the working tree
             files.append(item)
         return files
 
@@ -337,6 +339,8 @@ def parse_remote(url: str) -> tuple[str, str, str] | None:
     stripped = url.strip()
     if stripped.lower().startswith("file:") or ("://" not in stripped and ":" not in stripped):
         return None  # local paths and file:// urls carry no org/host identity
+    if re.match(r"^[A-Za-z]:[\\/]", stripped):
+        return None  # a Windows drive-letter path, not an scp-style remote
     m = _REMOTE_RE.match(stripped)
     if not m:
         return None
@@ -363,7 +367,9 @@ def probe_remote(repo: Repository, hints: RepoHints) -> dict[str, Any]:
 
 def probe_branch(repo: Repository, hints: RepoHints) -> dict[str, Any]:
     if hints.rev and not _SHA_RE.match(hints.rev):
-        return {"branch": hints.rev}
+        is_tag = repo.is_git and repo.git("show-ref", "--verify", "--quiet", f"refs/tags/{hints.rev}") is not None
+        if not is_tag:
+            return {"branch": hints.rev}
     if not repo.is_git:
         return {}
     out = repo.git("symbolic-ref", "--short", "refs/remotes/origin/HEAD")
@@ -376,6 +382,11 @@ def probe_branch(repo: Repository, hints: RepoHints) -> dict[str, Any]:
 
 
 PROBES: list[Probe] = [probe_config, probe_pyproject, probe_remote, probe_branch]
+
+
+def hint_identity(hints: RepoHints) -> Identity:
+    """The identity a repository has from its configuration alone (name, ``aliases``, ``vars``), without a checkout."""
+    return build_identity(Repository(hints.name, Path(os.devnull).parent / hints.name), hints, probes=[probe_config])
 
 
 def build_identity(repo: Repository, hints: RepoHints, *, probes: Iterable[Probe] = PROBES) -> Identity:

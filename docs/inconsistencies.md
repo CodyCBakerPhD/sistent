@@ -31,7 +31,8 @@ of that file, not as separate content.
 | Case | Example | Finding | Tune with |
 |---|---|---|---|
 | A satellite has no instruction file at all while main has one | main has `AGENTS.md`; `repo-3` has nothing | `missing`/`file`, downstream, **error**, locator `AGENTS.md` | `files`, `severity = { "missing.file" = "warning" }` |
-| The satellite uses a different file name for the same role | main: `AGENTS.md` (+ `CLAUDE.md` → `AGENTS.md` alias); `repo-1`: only `CLAUDE.md` | `missing`/`file` for the role main uses (`AGENTS.md`, warning, message says what the repo uses instead) and `extra`/`file` for `CLAUDE.md` (upstream); when the sets are disjoint this collapses to one `differs`/`name` (info, none) | `files`; per-repo `ignore = ["agent_instructions:AGENTS.md"]` if the naming is intentional |
+| The satellite uses a different file name for the same content | main: `AGENTS.md` (+ `CLAUDE.md` → `AGENTS.md` alias); `repo-1`: only `CLAUDE.md` | one `differs`/`name` (info, none): "main uses AGENTS.md (+CLAUDE.md alias); repo uses CLAUDE.md" | `files`; per-repo `ignore = ["agent_instructions:AGENTS.md"]` if the naming is intentional |
+| The satellite lacks one of several instruction files main has | main: `AGENTS.md` + `.github/copilot-instructions.md`; `repo-2`: only `AGENTS.md` | `missing`/`file` for the absent role (warning, downstream, message says what the repo has instead); a role only in the satellite is `extra`/`file` (upstream) | `files`, `severity = { "missing.file" = "info" }` |
 | A satellite has an instruction file main lacks | `repo-2` has `.github/copilot-instructions.md`, main does not | `extra`/`file`, upstream (info) | `files` |
 | `AGENTS.md` and `CLAUDE.md` in one repo have drifted apart | both exist as full documents with different content for the same heading | `differs`/`section`, none, warning, locator `AGENTS.md+CLAUDE.md#<Heading>` (self-check, also reported for main) | keep one file and alias the other |
 | Document titles differ | `# Instructions for automated agents` vs `# Custom instructions for GitHub Copilot in the **{{name}}** repository` | `differs`/`title`, none, info | `title = false` |
@@ -71,7 +72,7 @@ modes `installation = "similar"`, `documentation = "similar"`, `license = "simil
 | *Installation*/*Documentation*/*License* prose diverges beyond wording (after `{{name}}` substitution) | `differs`/`prose` (none, warning) or `missing`/`extra` prose | `sections`, `similarity_threshold` |
 | *Contributing* text is not verbatim main's | `differs`/`prose`, downstream, warning, diff in the detail | `sections = { contributing = "similar" }` |
 | Package-specific sections (*About*, *Features*, *Usage*) differ in content | **not a finding** (presence only) | `sections = { usage = "similar" }` to compare them |
-| README is `README.rst` | `unparseable`/`file`, info (RST sections are not parsed in v1; badges are) | `files` |
+| README is `README.rst` | `unparseable`/`file`, info (`README.rst` is a default candidate; its sections are not parsed in v1, its badges are) | `files` |
 
 ## 3. README badges (`readme_badges`, type `badges`)
 
@@ -89,15 +90,19 @@ mybinder, pepy, anaconda, GitHub Actions `badge.svg`, ...) and classified into k
 | Same badges in a different order | `reordered`/`badge`, downstream, info, both orders in the detail | `order = false` |
 | Badge URLs differ only by package/org/branch name, style, logo or colour | **not a finding** | – |
 | A badge still points at another configured repo (`pypi/l/pynwb` in roiextractors) | `stale`/`reference`, none, warning | `stale`, `aliases` |
-| No README in the satellite while main has one | `missing`/`file`, downstream, error | `severity` |
+| No README in the satellite while main has one | `missing`/`file`, downstream, warning (the `readme` aspect already reports the same gap as an error) | `severity` |
+| A badge still points at another configured repo | reported once, as `stale`/`reference` (below); the `differs`/`badge` that the foreign name would also cause is suppressed | – |
 
 ## 4. Folder layout (`layout`, type `tree`)
 
 Directories up to `depth = 2`, files at the root (`file_depth = 1`) plus `include = [".github/*",
 ".github/ISSUE_TEMPLATE/*"]`, with build artefacts, caches, virtualenvs and skills directories ignored (`ignore`).
 `tests/` and `docs/` are recorded as a whole but never descended (`leaves`): their inner layout is package-specific.
-Workflow files are left to the `workflows` aspect. Path components are identity-substituted (`src/neuroconv/` →
-`src/{{name}}/`). Only tracked or untracked-but-not-gitignored paths count.
+Workflow files are left to the `workflows` aspect, and so are the root files that other default aspects check
+(README, instruction files, LICENSE, CONTRIBUTING, CODE_OF_CONDUCT, SECURITY, `.pre-commit-config.yaml`,
+`.gitignore`, `CITATION.cff`, `pyproject.toml`: they are in the default `ignore`), so one gap is reported once. Path
+components are identity-substituted (`src/neuroconv/` → `src/{{name}}/`). Only tracked or untracked-but-not-gitignored
+paths that still exist on disk count.
 
 | Case | Finding | Tune with |
 |---|---|---|
@@ -152,16 +157,16 @@ required to exist without having to match. Keys absent in main are never require
 | Case | Finding | Tune with |
 |---|---|---|
 | The satellite has no `.github/workflows` while main has one | `missing`/`file`, downstream, warning | `dir` |
-| A workflow of main is absent (matched by file name, then `name`, then triggers + jobs) | `missing`/`workflow`, downstream, warning, locator `.github/workflows:ci.yml` | `ignore_files` |
+| A workflow of main is absent (matched by file name, then by name ignoring case and `.yml`/`.yaml`, then by `name:`, then by triggers + jobs) | `missing`/`workflow`, downstream, warning, locator `.github/workflows:ci.yml` | `ignore_files` |
 | The satellite has a workflow main lacks | `extra`/`workflow`, upstream (info) | – |
 | Same workflow under another file name | `moved`/`workflow`, downstream, info | – |
 | A trigger differs (`on: pull_request` missing, no `schedule`) | `missing`/`extra` subject `key`, locator `...:ci.yml:on.pull_request` | – |
 | A job is missing/extra/renamed | `missing`/`extra`/`moved` subject `job`, locator `...:ci.yml:jobs.test` | – |
 | A matrix axis differs (Python versions, OS) | `missing`/`extra`/`differs` subject `value`, info, locator `...:jobs.test.strategy.matrix.python-version` | `compare_matrix = false` |
-| An action is used in main but not in the satellite (per job) | `missing`/`action`, info | – |
+| An action is used in main but not in the satellite (per job) | `missing`/`action`, info; actions whose only uses are in a workflow that is itself missing or unparseable are not reported again | – |
 | An action is pinned to different versions across the fleet (`actions/checkout@v4` vs `@v3`) | `differs`/`action`, downstream, warning, locator `.github/workflows:actions/checkout` (aggregated across all workflows) | – |
 | `run:` scripts, `env`, `if`, permissions, path filters differ | **not compared** in v1 | – |
-| A workflow file cannot be parsed | `unparseable`/`file` for that file only | – |
+| A workflow file cannot be parsed (in main or a satellite) | `unparseable`/`file` for that file only, none, warning; the file takes no part in the matching | – |
 
 ## 8. pre-commit hooks (`pre_commit`, type `precommit`)
 
@@ -182,7 +187,9 @@ required to exist without having to match. Keys absent in main are never require
 | An aspect crashes or main's file is unparseable | a run error (counts as `error` for the exit code, even with `fail_on = never`); the aspect is skipped for the run |
 | A repo does not apply to an aspect | `[repos.X] skip_aspects`, or aspect `tags` vs repo `tags`: no findings, listed as a non-target |
 | An intentional, permanent difference | `[repos.X] ignore = ["<aspect>:<locator-glob>"]` → the finding stays in the JSON report as `suppressed: true` |
-| Accepted drift that should not fail CI until it changes | `--update-baseline` records finding ids; stale baseline entries are reported in the footer |
+| Accepted drift that should not fail CI until it changes | `--update-baseline` records finding ids with their repo and aspect; stale entries are reported in the footer. A partial run (`--repo`, `--aspect`, `--tag`, an unavailable satellite) only judges and rewrites the entries of the repos and aspects it covered |
+| An aspect carries `tags` that main does not | main is still extracted and compared against every satellite that carries one of the tags; only `[repos.<main>].skip_aspects` opts main out (a run error when a satellite still targets the aspect) |
+| A repo is named like its GitHub organisation (`acme/acme`) | a bare mention of the word becomes `{{name}}` in that repo and `{{org}}` in its siblings, so `identical`/`similar` sections containing it differ; add the word to `aliases` of the siblings or set `substitute = false` |
 | Improvements that several satellites share | *Candidates for main* section: `2/3 agent_instructions AGENTS.md#Release process (roiextractors, spikeinterface)` |
 
 ## Adding a case

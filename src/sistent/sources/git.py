@@ -86,8 +86,13 @@ def materialise(url: str, rev: str | None, cache_dir: Path, *, fetch: bool = Tru
         raise SourceError("git executable not found on PATH")
     cache_dir.mkdir(parents=True, exist_ok=True)
     with _locked(target.with_name(target.name + ".lock")):
+        if target.is_dir() and not (target / ".git").exists():
+            shutil.rmtree(target)  # a corrupt or half-deleted checkout is rebuilt instead of failing forever
         if target.is_dir():
-            _update(target, url, rev, timeout=timeout)
+            try:
+                _update(target, url, rev, timeout=timeout)
+            except SourceError as exc:
+                raise SourceError(f"{exc} (cached checkout: {target}; delete it to force a fresh clone)") from None
         else:
             _create(target, url, rev, timeout=timeout)
     return target
@@ -125,6 +130,7 @@ def _has_commit(cwd: Path, sha: str, *, timeout: int) -> bool:
 
 
 def _fetch_and_checkout(cwd: Path, url: str, rev: str | None, *, timeout: int) -> None:
+    default_branch, rev_kind = _remote_refs(cwd, rev, timeout=timeout)
     proc = _run(["fetch", "-q", "--depth", "1", "origin", rev or "HEAD"], cwd=cwd, timeout=timeout)
     if proc.returncode != 0:
         hint = ""
@@ -132,6 +138,46 @@ def _fetch_and_checkout(cwd: Path, url: str, rev: str | None, *, timeout: int) -
             hint = " (abbreviated commit SHAs cannot be fetched; use the full 40-character SHA)"
         raise SourceError(f"git fetch of {rev or 'HEAD'} from {url} failed: {_stderr(proc)}{hint}")
     _git(["checkout", "-q", "--detach", "FETCH_HEAD"], cwd=cwd, timeout=timeout)
+    _record_refs(cwd, rev, default_branch, rev_kind, timeout=timeout)
+
+
+def _remote_refs(cwd: Path, rev: str | None, *, timeout: int) -> tuple[str | None, str | None]:
+    """``(default branch, kind of rev)`` learned from ``git ls-remote --symref``; ``kind`` is ``branch``/``tag``/None.
+
+    Failures are not fatal: the checkout still works, only the identity probes lose the default-branch hint.
+    """
+    args = ["ls-remote", "--symref", "origin", "HEAD"]
+    if rev is not None and not _FULL_SHA.match(rev):
+        args += [f"refs/heads/{rev}", f"refs/tags/{rev}"]
+    proc = _run(args, cwd=cwd, timeout=timeout)
+    if proc.returncode != 0:
+        return None, None
+    default_branch: str | None = None
+    rev_kind: str | None = None
+    for line in proc.stdout.splitlines():
+        if line.startswith("ref: refs/heads/") and line.rstrip().endswith("\tHEAD"):
+            default_branch = line[len("ref: refs/heads/") :].split("\t", 1)[0]
+        elif rev is not None and line.rstrip().endswith(f"\trefs/heads/{rev}"):
+            rev_kind = "branch"
+        elif rev is not None and line.rstrip().endswith((f"\trefs/tags/{rev}", f"\trefs/tags/{rev}^{{}}")):
+            rev_kind = rev_kind or "tag"
+    return default_branch, rev_kind
+
+
+def _record_refs(cwd: Path, rev: str | None, default_branch: str | None, rev_kind: str | None, *, timeout: int) -> None:
+    """Leave the refs the identity probes read: ``refs/remotes/origin/HEAD`` and the fetched branch or tag."""
+    if default_branch:
+        _run(
+            ["symbolic-ref", "refs/remotes/origin/HEAD", f"refs/remotes/origin/{default_branch}"],
+            cwd=cwd,
+            timeout=timeout,
+        )
+        if rev is None:
+            _run(["update-ref", f"refs/remotes/origin/{default_branch}", "FETCH_HEAD"], cwd=cwd, timeout=timeout)
+    if rev is not None and rev_kind == "branch":
+        _run(["update-ref", f"refs/remotes/origin/{rev}", "FETCH_HEAD"], cwd=cwd, timeout=timeout)
+    elif rev is not None and rev_kind == "tag":
+        _run(["update-ref", f"refs/tags/{rev}", "FETCH_HEAD"], cwd=cwd, timeout=timeout)
 
 
 def _run(args: Sequence[str], *, cwd: Path, timeout: int) -> subprocess.CompletedProcess[str]:

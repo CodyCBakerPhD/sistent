@@ -625,3 +625,8 @@ class TestSubstituterSemantics:
     def test_default_where_is_empty(self, subst: Substituter) -> None:
         subst("spikeinterface")
         assert subst.hits[0].where == ""
+
+
+@pytest.mark.parametrize("url", ["C:/Users/me/repos/foo", "c:\\Users\\me\\repos\\foo", "D:/repos/foo.git"])
+def test_parse_remote_ignores_windows_drive_letter_paths(url: str) -> None:
+    assert parse_remote(url) is None

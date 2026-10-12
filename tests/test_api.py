@@ -288,3 +288,72 @@ def test_compute_exit_reasons() -> None:
     code, reason = api.compute_exit([], [], fail_on=None, unavailable=1, allow_unavailable=True)
     assert code == 0
     assert "(allowed)" in reason
+
+
+def test_aspect_tags_main_does_not_carry_still_compare(fleet: Callable[..., Config]) -> None:
+    # main has no tags at all; the aspect targets "python" satellites and main is still extracted for them
+    config = fleet('tags = ["python"]\n')
+    report = api.run(config, options=api.RunOptions(fetch=False))
+    assert report.errors == ()
+    assert report.aspects[0].targets == ("sat1",)
+    assert keys(report, "sat1") == {
+        ("sat1", "missing", "downstream", "RULES.txt#gamma"),
+        ("sat1", "extra", "upstream", "RULES.txt#delta"),
+    }
+    assert ("main", "rules") in report.snapshots
+
+
+def test_main_skip_aspects_with_a_targeted_satellite_is_a_run_error(fleet: Callable[..., Config]) -> None:
+    config = fleet()
+    config.path.write_text(CONFIG.replace('path = "main"', 'path = "main"\nskip_aspects = ["rules"]'))
+    report = api.run(load_config(config.path), options=api.RunOptions(fetch=False, fail_on="never"))
+    assert [(e.repo, e.aspect, e.stage) for e in report.errors] == [("main", "rules", "extract")]
+    assert "skip_aspects" in report.errors[0].message
+    assert report.findings == ()
+    assert report.exit_code == 1
+
+
+def test_tag_filter_matching_nothing_is_a_selection_error(fleet: Callable[..., Config]) -> None:
+    with pytest.raises(api.SelectionError, match="--tag 'nope' matches no configured satellite"):
+        api.run(fleet(), options=api.RunOptions(fetch=False, tags=("nope",)))
+
+
+def test_partial_runs_keep_baseline_entries_outside_their_scope(fleet: Callable[..., Config], tmp_path: Path) -> None:
+    config = fleet()
+    baseline = tmp_path / "baseline.json"
+    full = api.run(config, options=api.RunOptions(fetch=False, baseline=baseline, update_baseline=True))
+    assert len(read_baseline(baseline)) == 4
+    assert full.baseline_stale == ()
+
+    # restricted to sat1: sat2's accepted findings are neither stale nor dropped by --update-baseline
+    (tmp_path / "sat1" / "RULES.txt").write_text("alpha\nbeta\ngamma\n")  # sat1 is now clean
+    partial = api.run(
+        config, options=api.RunOptions(fetch=False, repos=("sat1",), baseline=baseline, update_baseline=True)
+    )
+    assert partial.baseline_stale == ()
+    stored = read_baseline(baseline)
+    assert {e.repo for e in stored.entries.values()} == {"sat2"}
+    assert len(stored) == 2
+
+    # sat2 unavailable: its entries survive the rewrite as well
+    import shutil
+
+    shutil.move(tmp_path / "sat2", tmp_path / "sat2.off")
+    unavailable = api.run(
+        config, options=api.RunOptions(fetch=False, baseline=baseline, update_baseline=True, fail_on="never")
+    )
+    assert unavailable.exit_code == 3
+    assert unavailable.baseline_stale == ()
+    assert len(read_baseline(baseline)) == 2
+    shutil.move(tmp_path / "sat2.off", tmp_path / "sat2")
+    back = api.run(config, options=api.RunOptions(fetch=False, baseline=baseline))
+    assert all(f.baselined for f in back.findings if f.repo == "sat2")
+    assert back.exit_code == 0
+
+
+def test_snapshot_stale_detection_sees_every_configured_repo(fleet: Callable[..., Config]) -> None:
+    config = fleet(files={"sat1/RULES.txt": "alpha\nbeta\ngamma\nsee sat2 for details\n"})
+    snapshots, errors = api.extract_snapshots(config, repos=["sat1"], fetch=False)
+    assert not errors
+    hits = snapshots[("sat1", "rules")].stale_hits
+    assert [(h.other_repo, h.alias) for h in hits] == [("sat2", "sat2")]

@@ -151,8 +151,8 @@ The default aspects:
 |---|---|---|
 | `agent_instructions` | `markdown` | `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.cursorrules`, `.windsurfrules`, `.clinerules`, `.github/copilot-instructions.md`, merged into one logical document: instruction files present, sections, bullet-level **rules** (as sets, so reordering is not drift), prose similarity. "Skills" sections are ignored. A satellite without any instruction file is an `error`. |
 | `readme` | `markdown` | `README.md` section presence and order; *Installation*, *Documentation* and *License* sections compared for similarity, *Contributing* for identity; "Table of contents" ignored. |
-| `readme_badges` | `badges` | Badge kinds (`pypi-version`, `ci:<workflow>`, `coverage`, `docs`, `doi`, `license`, ...), provider and order. Package/org names in badge URLs are normalised away. |
-| `layout` | `tree` | Directories two levels deep and root files, plus the top-level `.github/` files and issue templates; `src/<pkg>` becomes `src/{{name}}`. `tests/` and `docs/` are recorded as a whole but not descended; build artefacts, caches and skills directories are ignored. Files that differ only in spelling (`license.txt` vs `LICENSE.txt`) are reported as renamed, not missing. |
+| `readme_badges` | `badges` | Badge kinds (`pypi-version`, `ci:<workflow>`, `coverage`, `docs`, `doi`, `license`, ...), provider and order, read from the first of `README.md`/`README.rst` present. Package/org names in badge URLs are normalised away. |
+| `layout` | `tree` | Directories two levels deep and root files, plus the top-level `.github/` files and issue templates; `src/<pkg>` becomes `src/{{name}}`. `tests/` and `docs/` are recorded as a whole but not descended; build artefacts, caches, skills directories and the root files other aspects check are ignored. Files that differ only in spelling (`license.txt` vs `LICENSE.txt`) are reported as renamed, not missing. |
 | `community_files` | `files` | Presence of `LICENSE`, `CONTRIBUTING`, `CODE_OF_CONDUCT`, `SECURITY`, `.pre-commit-config.yaml`, `.gitignore`, codespell config, `CITATION.cff` (required when main has them); `CODE_OF_CONDUCT` must match main (years and names normalised). |
 | `pyproject` | `toml` | `build-system`, `requires-python`, classifiers (as a set), `project.urls` and `tool.codespell` (keys only), `test`/`dev`/`docs` extras (as requirements: names, then specifiers), `tool.ruff`, `tool.pytest.ini_options`, `tool.coverage`, `tool.mypy` (exact; `tool.ruff.lint.per-file-ignores` only has to exist). A more specific key with its own mode is left out of its parent's comparison. |
 | `workflows` | `workflows` | `.github/workflows`: workflow set (matched by file name, then `name`), triggers, jobs, matrices, and `uses:` action versions across all workflows. |
@@ -227,7 +227,9 @@ sistent check                              # baselined findings are hidden and n
 ```
 
 Finding ids are stable across runs (hash of aspect, repo, kind, subject, locator and normalised content), and stale
-baseline entries are reported in the footer.
+baseline entries are reported in the footer. Entries are scoped to their repo and aspect, so a partial run (`--repo`,
+`--aspect`, `--tag`, or an unavailable satellite) neither reports the untouched entries as stale nor drops them when
+the baseline is rewritten.
 
 ## Library use
 

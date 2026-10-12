@@ -397,9 +397,9 @@ class TestGit:
         assert rels(repo, depth=2, ignore=("src/pkg",)) == ["README.md", "docs", "docs/api", "docs/index.md"]
 
     @requires_git
-    def test_iter_files_with_git_lists_deleted_but_tracked_file(self, tmp_path: Path) -> None:
+    def test_iter_files_with_git_skips_deleted_but_tracked_file(self, tmp_path: Path) -> None:
         # `git ls-files --cached` reports index entries; a file removed from the work tree but still in the index
-        # is therefore listed. This documents the behaviour rather than prescribing it.
+        # must not be listed, so the layout reflects what is on disk (as the files aspect sees it).
         init_git(tmp_path, {"a.txt": "", "b.txt": ""})
         (tmp_path / "b.txt").unlink()
-        assert rels(Repository("r", tmp_path)) == ["a.txt", "b.txt"]
+        assert rels(Repository("r", tmp_path)) == ["a.txt"]

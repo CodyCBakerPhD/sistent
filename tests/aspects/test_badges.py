@@ -68,13 +68,13 @@ def snap(make_snapshot: MakeSnapshot, repo: str, badges: list[dict[str, Any]], *
 class TestOptions:
     def test_defaults(self) -> None:
         options = BadgesOptions()
-        assert (options.file, options.order, options.ignore_kinds) == ("README.md", True, [])
+        assert (options.files, options.order, options.ignore_kinds) == (["README.md", "README.rst"], True, [])
         assert options.enabled is True
         assert (options.tags, options.ignore, options.severity) == (None, [], {})
 
     def test_every_option_has_help(self) -> None:
         infos = {info.name: info for info in describe_options(BadgesOptions)}
-        assert {"file", "order", "ignore_kinds"} <= set(infos)
+        assert {"files", "order", "ignore_kinds"} <= set(infos)
         assert all(info.help for info in infos.values())
         assert infos["ignore_kinds"].type == "list[str]"
 
@@ -82,7 +82,7 @@ class TestOptions:
         table = tomllib.loads(DEFAULT_CONFIG)["aspects"]["readme_badges"]
         assert table.pop("type") == "badges"
         assert parse_options(BadgesOptions, table, where="aspects.readme_badges") == BadgesOptions(
-            file="README.md", order=True
+            files=["README.md", "README.rst"], order=True
         )
 
     def test_registered_as_builtin(self) -> None:
@@ -292,6 +292,7 @@ class TestExtract:
         snapshot = aspect().run_extract(ctx)
         assert snapshot.data == {
             "present": True,
+            "file": "README.md",
             "badges": [
                 {
                     "kind": "pypi-version",
@@ -321,13 +322,13 @@ class TestExtract:
 
     def test_absent_file(self, make_repo: MakeRepo) -> None:
         snapshot = aspect().run_extract(make_repo({"docs/index.md": "x"}))
-        assert snapshot.data == {"present": False, "badges": []}
+        assert snapshot.data == {"present": False, "file": None, "badges": []}
         assert snapshot.sources == ()
 
     def test_file_option_and_rst(self, make_repo: MakeRepo) -> None:
         rst = ".. image:: https://badge.fury.io/py/widget.svg\n     :target: https://badge.fury.io/py/widget\n     :alt: PyPI\n"
         ctx = make_repo({"README.rst": rst}, name="widget")
-        snapshot = aspect(file="README.rst").run_extract(ctx)
+        snapshot = aspect(files=["README.rst"]).run_extract(ctx)
         assert snapshot.sources == ("README.rst",)
         assert snapshot.data["present"] is True
         assert [(b["kind"], b["syntax"], b["line"], b["alt"]) for b in snapshot.data["badges"]] == [
@@ -493,9 +494,9 @@ class TestCompare:
     def test_custom_file_in_locators(self, make_snapshot: MakeSnapshot) -> None:
         main = snap(make_snapshot, "main", [badge("a")])
         other = snap(make_snapshot, "sat", [badge("b")])
-        assert {f.locator for f in aspect(file="docs/index.md").compare(main, other)} == {"docs/index.md#badges"}
+        assert {f.locator for f in aspect(files=["docs/index.md"]).compare(main, other)} == {"docs/index.md#badges"}
         absent = snap(make_snapshot, "sat", [], present=False)
-        assert [f.locator for f in aspect(file="docs/index.md").compare(main, absent)] == ["docs/index.md"]
+        assert [f.locator for f in aspect(files=["docs/index.md"]).compare(main, absent)] == ["docs/index.md"]
 
     def test_user_severity_table_applies(self, make_snapshot: MakeSnapshot) -> None:
         main = snap(make_snapshot, "main", [badge("a")])
@@ -600,7 +601,7 @@ class TestRealFixtures:
         assert snapshot.data["badges"][0]["href"] == "https://pypi.org/project/{{name}}/"
 
     def test_pynwb_vs_hdmf_rst(self, make_repo: MakeRepo, real_fixture: Callable[[str], str]) -> None:
-        instance = aspect(file="README.rst")
+        instance = aspect(files=["README.rst"])
         main = make_repo({"README.rst": real_fixture("pynwb__README.rst")}, name="pynwb", identity=PYNWB, is_main=True)
         sat = make_repo({"README.rst": real_fixture("hdmf__README.rst")}, name="hdmf", identity=HDMF)
         main_snap = instance.run_extract(main)
@@ -617,3 +618,15 @@ class TestRealFixtures:
             (Kind.DIFFERS, "docs"),  # app.readthedocs.org vs readthedocs.org
         }
         assert all(f.locator == "README.rst#badges" for f in found)
+
+
+def test_a_stale_foreign_name_does_not_also_count_as_a_differing_badge(make_snapshot: MakeSnapshot) -> None:
+    from sistent.model import StaleHit
+
+    main = snap(make_snapshot, "main", [badge("pypi-license", params=("pypi", "l"))])
+    theirs = [badge("pypi-license", params=("pypi", "l", "pynwb"))]
+    plain = snap(make_snapshot, "sat", theirs)
+    assert [f.kind for f in aspect().compare(main, plain)] == [Kind.DIFFERS]
+    hit = StaleHit(where=WHERE, alias="pynwb", other_repo="pynwb", excerpt="pypi/l/pynwb")
+    flagged = make_snapshot("readme_badges", "sat", {"present": True, "badges": theirs}, stale_hits=(hit,))
+    assert aspect().compare(main, flagged) == []
