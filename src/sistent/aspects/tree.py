@@ -48,6 +48,13 @@ class TreeOptions(BaseOptions):
             "skills directories. As for every aspect, findings whose locator matches are suppressed too."
         },
     )
+    leaves: list[str] = field(
+        default_factory=list,
+        metadata={
+            "help": "Directory globs recorded as a whole but never descended (e.g. 'tests', 'docs'): their inner "
+            "layout is package-specific."
+        },
+    )
     use_git: bool = field(
         default=True,
         metadata={
@@ -91,7 +98,12 @@ class TreeAspect(Aspect):
             entries = _walk(ctx, depth=limit, ignore=opts.ignore)
         dirs: set[str] = set()
         files: set[str] = set()
+        leaves = [compile_glob(g.strip("/")) for g in opts.leaves]
         for entry in entries:
+            if leaves and any(
+                leaf.match(ancestor.rstrip("/")) for ancestor in _ancestors(entry.rel) for leaf in leaves
+            ):
+                continue
             if entry.is_dir:
                 if entry.depth <= opts.depth:
                     dirs.add(_placeholder(ctx, entry.rel) + "/")
@@ -114,8 +126,9 @@ class TreeAspect(Aspect):
     def compare(self, main: Snapshot, other: Snapshot) -> list[Finding]:
         """``missing``/``extra``/``moved`` findings with subject ``path``.
 
-        Missing and extra paths with the same basename under different parents are paired into one ``moved`` finding
-        first; then, following the highest-node rule, a missing or extra path whose ancestor is itself unmatched
+        Missing and extra paths with the same basename (ignoring case and the ``.yaml``/``.yml`` spelling) under
+        different parents, or with such an equivalent basename under the same parent, are paired into one ``moved``
+        finding first; then, following the highest-node rule, a missing or extra path whose ancestor is itself unmatched
         (missing, extra or moved) is dropped, and a moved pair whose parents moved together is dropped too.
         """
         dirs = diff_sets(_strings(main.data.get("dirs")), _strings(other.data.get("dirs")))
@@ -147,13 +160,14 @@ class TreeAspect(Aspect):
         for main_path, other_path in moved:
             if _has_ancestor(main_path, moved_main) and _has_ancestor(other_path, moved_other):
                 continue
+            verb = "named differently" if _parent(main_path) == _parent(other_path) else "moved"
             out.append(
                 self.finding(
                     repo=other.repo,
                     kind=Kind.MOVED,
                     subject=Subject.PATH,
                     locator=main_path,
-                    message=f"{_noun(main_path)} moved: {main_path} -> {other_path}",
+                    message=f"{_noun(main_path)} {verb}: {main_path} -> {other_path}",
                     detail=f"main: {main_path} ; repo: {other_path}",
                     detail_kind="text",
                     content_key=main_path,
@@ -295,21 +309,30 @@ def _has_ancestor(path: str, roots: set[str]) -> bool:
     return any(a in roots for a in _ancestors(path))
 
 
+def _equivalent_name(path: str) -> str:
+    """Basename key for pairing: case-insensitive, ``.yaml`` and ``.yml`` treated as the same spelling."""
+    name = _basename(path).casefold()
+    return name[: -len(".yaml")] + ".yml" if name.endswith(".yaml") else name
+
+
 def _pair_moves(missing: Sequence[str], extra: Sequence[str]) -> list[tuple[str, str]]:
-    """``(main_path, other_path)`` pairs sharing a basename that is unique on both sides, under different parents."""
+    """``(main_path, other_path)`` pairs whose equivalent basename is unique on both sides.
+
+    Different parents mean the entry moved; the same parent means it is only spelled differently (``LICENSE.txt``
+    vs ``license.txt``, ``ci.yaml`` vs ``ci.yml``). Identical paths never reach here.
+    """
     by_name_main: dict[str, list[str]] = {}
     for path in missing:
-        by_name_main.setdefault(_basename(path), []).append(path)
+        by_name_main.setdefault(_equivalent_name(path), []).append(path)
     by_name_other: dict[str, list[str]] = {}
     for path in extra:
-        by_name_other.setdefault(_basename(path), []).append(path)
+        by_name_other.setdefault(_equivalent_name(path), []).append(path)
     pairs: list[tuple[str, str]] = []
     for name, mains in by_name_main.items():
         others = by_name_other.get(name)
         if others is None or len(mains) != 1 or len(others) != 1:
             continue
-        if _parent(mains[0]) != _parent(others[0]):
-            pairs.append((mains[0], others[0]))
+        pairs.append((mains[0], others[0]))
     return pairs
 
 

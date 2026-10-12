@@ -17,7 +17,7 @@ Every mode is gated on main: a key absent in main is never required in a satelli
 from __future__ import annotations
 
 import datetime
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
@@ -158,7 +158,13 @@ class TomlAspect(Aspect):
             else:
                 # ``exact``, or a mode whose value shape does not fit (a scalar under ``set``, a list under
                 # ``keys``): the values are compared whole, which yields a single ``differs`` leaf on mismatch.
-                out.extend(self._compare_exact(repo, dotted, main_value, other_value))
+                # Sub-keys that have their own configured mode are left to that mode ("most specific key wins").
+                nested = [k for k in self.opts.keys if k.startswith(dotted + ".")]
+                out.extend(
+                    self._compare_exact(
+                        repo, dotted, _without(main_value, dotted, nested), _without(other_value, dotted, nested)
+                    )
+                )
         return out
 
     def _compare_exact(self, repo: str, dotted: str, main_value: Any, other_value: Any) -> list[Finding]:
@@ -248,12 +254,34 @@ def _normalise(value: Any, ctx: RepoContext, *, where: str) -> Any:
     if isinstance(value, str):
         return ctx.substitute(value, where=where)
     if isinstance(value, Mapping):
-        return {str(key): _normalise(item, ctx, where=where) for key, item in value.items()}
+        # keys are substituted too: ``per-file-ignores`` and similar tables are keyed by package paths
+        return {
+            ctx.substitute(str(key), where=where): _normalise(item, ctx, where=where) for key, item in value.items()
+        }
     if isinstance(value, list):
         return [_normalise(item, ctx, where=where) for item in value]
     if isinstance(value, datetime.datetime | datetime.date | datetime.time):
         return value.isoformat()
     return value
+
+
+def _without(value: Any, dotted: str, nested: Sequence[str]) -> Any:
+    """``value`` (the content of ``dotted``) with the sub-trees named by ``nested`` dotted keys removed."""
+    if not nested or not isinstance(value, Mapping):
+        return value
+    out: dict[str, Any] = dict(value)
+    for key in nested:
+        parts = key[len(dotted) + 1 :].split(".")
+        cursor: Any = out
+        for part in parts[:-1]:
+            if not isinstance(cursor, dict) or part not in cursor:
+                cursor = None
+                break
+            cursor[part] = dict(cursor[part]) if isinstance(cursor[part], Mapping) else cursor[part]
+            cursor = cursor[part]
+        if isinstance(cursor, dict):
+            cursor.pop(parts[-1], None)
+    return out
 
 
 def _element_key(item: Any) -> str:

@@ -32,8 +32,8 @@ LAYOUT_FILES: dict[str, str] = {
 }
 
 LAYOUT_DATA: dict[str, list[str]] = {
-    "dirs": [".github/", ".github/workflows/", "docs/", "docs/api/", "src/", "src/{{name}}/", "tests/"],
-    "files": [".github/dependabot.yml", ".github/workflows/ci.yml", "README.md", "docs/conf.py", "pyproject.toml"],
+    "dirs": [".github/", ".github/workflows/", "docs/", "src/", "src/{{name}}/", "tests/"],
+    "files": [".github/dependabot.yml", "README.md", "pyproject.toml"],
 }
 
 
@@ -65,7 +65,8 @@ class TestOptions:
         options = parse_options(TreeOptions, layout_table(), where="aspects.layout")
         assert options.depth == 2
         assert options.file_depth == 1
-        assert options.include == [".github/**", "docs/*"]
+        assert options.include == [".github/*", ".github/ISSUE_TEMPLATE/*"]
+        assert options.leaves == ["tests", "docs"]
         assert "__pycache__" in options.ignore
         assert ".claude/skills" in options.ignore
         assert options.use_git is True
@@ -168,10 +169,34 @@ class TestExtract:
 
     def test_include_globs_add_files_beyond_file_depth(self, make_repo: MakeRepo) -> None:
         ctx = make_repo({"docs/conf.py": "", "docs/api/index.md": "", ".github/a/b/c.yml": "", "src/p/q/r.md": ""})
-        assert layout(include=["docs/*"]).extract(ctx)["files"] == ["docs/conf.py"]
+        assert layout(include=["docs/*"], leaves=[]).extract(ctx)["files"] == ["docs/conf.py"]
         assert layout(include=[".github/**"]).extract(ctx)["files"] == [".github/a/b/c.yml"]
-        assert layout(include=["**/*.md"]).extract(ctx)["files"] == ["docs/api/index.md", "src/p/q/r.md"]
+        assert layout(include=["**/*.md"], leaves=[]).extract(ctx)["files"] == ["docs/api/index.md", "src/p/q/r.md"]
         assert layout(include=[]).extract(ctx)["files"] == []
+
+    def test_spelling_differences_pair_into_one_moved_finding(self, make_snapshot: Any) -> None:
+        main = snap(make_snapshot, "main", [".github/", "a/"], ["license.txt", ".github/ci.yaml", "a/Keep.md"])
+        other = snap(make_snapshot, "sat", [".github/", "a/"], ["LICENSE.txt", ".github/ci.yml", "a/keep.md"])
+        findings = layout().compare(main, other)
+        assert tuples(findings) == {
+            (Kind.MOVED, Subject.PATH, Direction.DOWNSTREAM, "license.txt"),
+            (Kind.MOVED, Subject.PATH, Direction.DOWNSTREAM, ".github/ci.yaml"),
+            (Kind.MOVED, Subject.PATH, Direction.DOWNSTREAM, "a/Keep.md"),
+        }
+        assert all("named differently" in f.message for f in findings)
+
+    def test_leaves_are_recorded_but_never_descended(self, make_repo: MakeRepo) -> None:
+        ctx = make_repo({"docs/conf.py": "", "docs/api/index.md": "", "tests/unit/test_a.py": "", "src/p/q.py": ""})
+        data = layout(depth=3, include=["**/*"], leaves=["tests", "docs"]).extract(ctx)
+        assert data == {"dirs": ["docs/", "src/", "src/p/", "tests/"], "files": ["src/p/q.py"]}
+        assert layout(depth=2, include=[], leaves=[]).extract(ctx)["dirs"] == [
+            "docs/",
+            "docs/api/",
+            "src/",
+            "src/p/",
+            "tests/",
+            "tests/unit/",
+        ]
 
     def test_include_depth_does_not_widen_directories(self, make_repo: MakeRepo) -> None:
         ctx = make_repo({"a/b/c/e.txt": "", "a/b/c/d/deep.txt": ""})
@@ -239,10 +264,8 @@ class TestExtract:
         assert data["dirs"] == LAYOUT_DATA["dirs"]
         assert data["files"] == [
             ".github/dependabot.yml",
-            ".github/workflows/ci.yml",
             ".gitignore",
             "README.md",
-            "docs/conf.py",
             "pyproject.toml",
             "untracked.txt",
         ]
@@ -251,10 +274,8 @@ class TestExtract:
         assert "generated/" in walked["dirs"]
         assert walked["files"] == [
             ".github/dependabot.yml",
-            ".github/workflows/ci.yml",
             ".gitignore",
             "README.md",
-            "docs/conf.py",
             "pyproject.toml",
             "secrets.txt",
             "untracked.txt",

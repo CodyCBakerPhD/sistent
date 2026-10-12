@@ -61,6 +61,7 @@ class TreeOptions(BaseOptions):
     depth: int = 2
     file_depth: int = 1
     include: list[str] = field(default_factory=list)
+    leaves: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -254,7 +255,7 @@ def test_relative_path_resolves_against_config_directory(
     assert config.repos["a"].path == nested / "../../checkouts/a"
     assert config.repos["a"].path is not None
     assert config.repos["a"].path.is_absolute()
-    assert config.repos["b"].path == Path("/abs/b").absolute()
+    assert config.repos["b"].path == Path(config.directory.anchor, "abs", "b")
 
 
 def test_path_expands_user_and_env(
@@ -268,8 +269,9 @@ def test_path_expands_user_and_env(
         make_config,
         registry,
     )
-    assert config.repos["a"].path == Path("/srv/fleet/a").absolute()
-    assert config.repos["b"].path == Path("/home/someone/b").absolute()
+    anchor = config.directory.anchor  # root-relative paths take the config directory's drive on Windows
+    assert config.repos["a"].path == Path(anchor, "srv", "fleet", "a")
+    assert config.repos["b"].path == Path(anchor, "home", "someone", "b")
     assert config.baseline == config.directory / "base.json"
 
 
@@ -395,7 +397,7 @@ def test_sistent_values(make_config: MakeConfig, registry: Registry, tmp_path: P
     assert config.jobs == 2
     assert config.defaults is False
     assert config.stale is False
-    assert config.baseline == Path("/tmp/base.json").absolute()
+    assert config.baseline == Path(config.directory.anchor, "tmp", "base.json")
     assert config.aspects == ()
 
 

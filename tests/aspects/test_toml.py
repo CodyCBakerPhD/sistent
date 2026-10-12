@@ -12,7 +12,7 @@ import pytest
 from sistent.aspects import DEFAULT_CONFIG
 from sistent.aspects.base import UnparseableFile
 from sistent.aspects.toml import MODES, TomlAspect, TomlOptions
-from sistent.model import Direction, Finding, Identity, Severity, Snapshot
+from sistent.model import Direction, Finding, Identity, Kind, Severity, Snapshot
 from sistent.options import BaseOptions, OptionsError, parse_options
 from tests.conftest import MakeRepo
 
@@ -130,6 +130,18 @@ class TestOptions:
 
 
 class TestExtract:
+    def test_table_keys_are_substituted_like_values(self, make_repo: MakeRepo) -> None:
+        text = (
+            '[project]\nname = "neuroconv"\n[tool.ruff.lint.per-file-ignores]\n'
+            '"src/neuroconv/tools/x.py" = ["D"]\n"tests/**" = ["S101"]\n'
+        )
+        ctx = make_repo({"pyproject.toml": text}, name="neuroconv")
+        data = aspect({"tool.ruff.lint.per-file-ignores": "present"}).extract(ctx)
+        assert data["values"]["tool.ruff.lint.per-file-ignores"] == {
+            "src/{{name}}/tools/x.py": ["D"],
+            "tests/**": ["S101"],
+        }
+
     def test_default_keys_on_a_realistic_pyproject(self, make_repo: MakeRepo) -> None:
         ctx = make_repo(
             {"pyproject.toml": PYPROJECT}, name="neuroconv", url="https://github.com/catalystneuro/neuroconv"
@@ -152,6 +164,7 @@ class TestExtract:
                 "project.optional-dependencies.dev": None,
                 "project.optional-dependencies.docs": ["sphinx"],
                 "tool.ruff": {"line-length": 120, "lint": {"select": ["E", "F"]}},
+                "tool.ruff.lint.per-file-ignores": None,
                 "tool.pytest.ini_options": {"testpaths": ["tests"]},
                 "tool.codespell": None,
                 "tool.coverage": None,
@@ -227,6 +240,35 @@ class TestExtract:
 
 
 # ----- comparison --------------------------------------------------------------------------------------------------
+
+
+class TestSpecificKeyWins:
+    def test_sub_key_with_its_own_mode_is_left_out_of_the_parent_exact_comparison(
+        self, make_snapshot: MakeSnapshot
+    ) -> None:
+        keys = {"tool.ruff": "exact", "tool.ruff.lint.per-file-ignores": "present"}
+        ruff = {"line-length": 120, "lint": {"select": ["E"], "per-file-ignores": {"a.py": ["D"]}}}
+        main = snap(make_snapshot, "main", {"tool.ruff": ruff, "tool.ruff.lint.per-file-ignores": {"a.py": ["D"]}})
+        other_ruff = {"line-length": 120, "lint": {"select": ["E"], "per-file-ignores": {"b.py": ["S"]}}}
+        other = snap(
+            make_snapshot, "sat", {"tool.ruff": other_ruff, "tool.ruff.lint.per-file-ignores": {"b.py": ["S"]}}
+        )
+        assert aspect(keys).compare(main, other) == []
+
+        # the parent still reports differences outside the carved-out sub-tree
+        other_ruff = {"line-length": 100, "lint": {"select": ["E"], "per-file-ignores": {"b.py": ["S"]}}}
+        other = snap(
+            make_snapshot, "sat", {"tool.ruff": other_ruff, "tool.ruff.lint.per-file-ignores": {"b.py": ["S"]}}
+        )
+        found = aspect(keys).compare(main, other)
+        assert [(f.kind, f.locator) for f in found] == [(Kind.DIFFERS, "pyproject.toml:tool.ruff.line-length")]
+
+        # and the sub-key itself is still required to exist
+        other = snap(make_snapshot, "sat", {"tool.ruff": {"line-length": 120, "lint": {"select": ["E"]}}})
+        found = aspect(keys).compare(main, other)
+        assert [(f.kind, f.locator) for f in found] == [
+            (Kind.MISSING, "pyproject.toml:tool.ruff.lint.per-file-ignores")
+        ]
 
 
 class TestFileGate:

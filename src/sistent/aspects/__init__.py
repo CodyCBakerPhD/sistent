@@ -52,12 +52,14 @@ type = "badges"
 file = "README.md"
 order = true
 
-# Folder layout: directories two levels deep, files at the root, plus .github/ and docs/.
+# Folder layout: directories two levels deep (src/<pkg>), files at the root, plus the .github/ files that other
+# aspects do not cover. tests/ and docs/ are recorded as a whole: their inner layout is package-specific.
 [aspects.layout]
 type = "tree"
 depth = 2
 file_depth = 1
-include = [".github/**", "docs/*"]
+include = [".github/*", ".github/ISSUE_TEMPLATE/*"]
+leaves = ["tests", "docs"]
 ignore = [
     ".git", "__pycache__", "*.egg-info", ".venv", "venv", ".tox", ".nox", "build", "dist", "htmlcov",
     ".mypy_cache", ".ruff_cache", ".pytest_cache", ".idea", ".vscode", "node_modules",
@@ -89,8 +91,9 @@ file = "pyproject.toml"
 "project.optional-dependencies.dev" = "requirements"
 "project.optional-dependencies.docs" = "requirements"
 "tool.ruff" = "exact"
+"tool.ruff.lint.per-file-ignores" = "present"
 "tool.pytest.ini_options" = "exact"
-"tool.codespell" = "exact"
+"tool.codespell" = "keys"
 "tool.coverage" = "exact"
 "tool.mypy" = "exact"
 

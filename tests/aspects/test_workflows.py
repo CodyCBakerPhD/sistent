@@ -388,7 +388,6 @@ class TestExtract:
                 },
             ],
             "actions": {
-                "./.github/actions/local-thing": [],
                 "actions/checkout": ["v3", "v4"],
                 "actions/setup-python": ["v5"],
                 "codecov/codecov-action": ["v4"],
@@ -426,6 +425,17 @@ class TestExtract:
         snapshot = aspect().run_extract(make_repo({"README.md": "x"}))
         assert snapshot.data == {"present": False, "workflows": [], "actions": {}, "unparseable": {}}
         assert snapshot.sources == ()
+
+    def test_local_actions_and_reusable_workflows_stay_out_of_the_aggregate(self, make_repo: MakeRepo) -> None:
+        text = (
+            "name: ci\non: [push]\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n"
+            "      - uses: ./.github/actions/setup\n      - uses: actions/checkout@v4\n"
+            "  b:\n    uses: ./.github/workflows/reusable.yml\n"
+        )
+        payload = aspect().extract(make_repo({f"{DIR}/ci.yml": text}, substitute=False))
+        assert payload["actions"] == {"actions/checkout": ["v4"]}
+        assert payload["workflows"][0]["jobs"]["a"]["uses"][0]["action"] == "./.github/actions/setup"
+        assert payload["workflows"][0]["jobs"]["b"]["reusable"] == "./.github/workflows/reusable.yml"
 
     def test_directory_present_but_empty(self, make_repo: MakeRepo) -> None:
         payload = aspect().extract(make_repo({f"{DIR}/": ""}))

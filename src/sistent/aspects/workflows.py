@@ -100,11 +100,15 @@ class WorkflowsAspect(Aspect):
             workflows.append(workflow)
             for job in workflow["jobs"].values():
                 for use in job["uses"]:
+                    if is_local(use["action"]):
+                        continue  # repo-local actions are layout, not fleet-wide pins
                     versions.setdefault(use["action"], set())
                     if use["version"] is not None:
                         versions[use["action"]].add(use["version"])
                 if job["reusable"] is not None:
                     action, version = split_uses(job["reusable"])
+                    if is_local(action):
+                        continue
                     versions.setdefault(action, set())
                     if version is not None:
                         versions[action].add(version)
@@ -504,6 +508,11 @@ def matrix_axes(strategy: Any) -> dict[str, list[str]]:
     if not isinstance(matrix, Mapping):
         return {}
     return {str(axis): sorted(set(as_str_list(values))) for axis, values in matrix.items() if axis not in _MATRIX_META}
+
+
+def is_local(action: str) -> bool:
+    """Whether ``uses:`` points inside the repository (``./.github/actions/x``, ``./.github/workflows/y.yml``)."""
+    return action.startswith("./")
 
 
 def split_uses(uses: str) -> tuple[str, str | None]:

@@ -93,9 +93,11 @@ mybinder, pepy, anaconda, GitHub Actions `badge.svg`, ...) and classified into k
 
 ## 4. Folder layout (`layout`, type `tree`)
 
-Directories up to `depth = 2`, files at the root (`file_depth = 1`) plus `include = [".github/**", "docs/*"]`, with
-build artefacts, caches, virtualenvs and skills directories ignored (`ignore`). Path components are identity-substituted
-(`src/neuroconv/` → `src/{{name}}/`). Only tracked or untracked-but-not-gitignored paths count.
+Directories up to `depth = 2`, files at the root (`file_depth = 1`) plus `include = [".github/*",
+".github/ISSUE_TEMPLATE/*"]`, with build artefacts, caches, virtualenvs and skills directories ignored (`ignore`).
+`tests/` and `docs/` are recorded as a whole but never descended (`leaves`): their inner layout is package-specific.
+Workflow files are left to the `workflows` aspect. Path components are identity-substituted (`src/neuroconv/` →
+`src/{{name}}/`). Only tracked or untracked-but-not-gitignored paths count.
 
 | Case | Finding | Tune with |
 |---|---|---|
@@ -103,6 +105,8 @@ build artefacts, caches, virtualenvs and skills directories ignored (`ignore`). 
 | A root file of main is absent (`CHANGELOG.md`, `.pre-commit-config.yaml`, `pyproject.toml`) | `missing`/`path`, downstream, warning | `file_depth`, `include` |
 | The satellite has directories/files main lacks | `extra`/`path`, upstream (info) | – |
 | Flat layout vs `src/` layout | `moved`/`path`, downstream, info (`main: src/{{name}}/ ; repo: {{name}}/`) | – |
+| Same file spelled differently (`license.txt` vs `LICENSE.txt`, `ci.yaml` vs `ci.yml`) | `moved`/`path`, downstream, info ("named differently") | – |
+| Sub-directories of `tests/` or `docs/` differ | **not a finding** (leaf directories) | `leaves = []` to compare them |
 | The package directory is named after the repo | **not a finding** (substituted to `{{name}}`) | `aliases` when the import name is unrelated to the repo name |
 | `.claude/skills/`, `skills/`, `SKILL.md` | **ignored by default** | `ignore` |
 
@@ -123,9 +127,12 @@ Entries are any-of globs searched in `search_dirs = [".", ".github", "docs"]`: `
 ## 6. `pyproject.toml` (`pyproject`, type `toml`)
 
 Keys are compared with a mode each (`[aspects.pyproject.keys]`): `exact` (`build-system`, `project.requires-python`,
-`tool.ruff`, `tool.pytest.ini_options`, `tool.codespell`, `tool.coverage`, `tool.mypy`), `set` (`project.classifiers`),
-`keys` (`project.urls`), `requirements` (`project.optional-dependencies.test|dev|docs`), `present`. Keys absent in main
-are never required.
+`tool.ruff`, `tool.pytest.ini_options`, `tool.coverage`, `tool.mypy`), `set` (`project.classifiers`), `keys`
+(`project.urls`, `tool.codespell`), `requirements` (`project.optional-dependencies.test|dev|docs`), `present`
+(`tool.ruff.lint.per-file-ignores`). The most specific configured key wins: a sub-key with its own mode is left out of
+its parent's `exact` comparison, which is how per-package tables such as `per-file-ignores` or codespell word lists are
+required to exist without having to match. Keys absent in main are never required. Table keys that are paths
+(`per-file-ignores."src/neuroconv/x.py"`) are identity-substituted like values.
 
 | Case | Finding | Tune with |
 |---|---|---|
