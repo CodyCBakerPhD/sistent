@@ -13,11 +13,12 @@ import hashlib
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import threading
 import time
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -38,6 +39,27 @@ _UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
 
 class SourceError(Exception):
     """A repository could not be materialised; the message names the cause (and, from ``resolve``, the repo)."""
+
+
+def remove_tree(path: Path, *, ignore_errors: bool = False) -> None:
+    """``shutil.rmtree`` that also removes read-only entries (git object files are read-only on Windows)."""
+
+    def _make_writable_and_retry(func: Callable[[str], object], failed: str, _exc: object) -> None:
+        for candidate in (Path(failed), Path(failed).parent):
+            try:
+                os.chmod(candidate, os.stat(candidate).st_mode | stat.S_IWRITE)
+            except OSError:
+                pass
+        func(failed)
+
+    try:
+        if sys.version_info >= (3, 12):
+            shutil.rmtree(path, onexc=_make_writable_and_retry)
+        else:  # pragma: no cover - the onerror form is deprecated from 3.12
+            shutil.rmtree(path, onerror=_make_writable_and_retry)
+    except OSError:
+        if not ignore_errors:
+            raise
 
 
 def git_available() -> bool:
@@ -87,7 +109,7 @@ def materialise(url: str, rev: str | None, cache_dir: Path, *, fetch: bool = Tru
     cache_dir.mkdir(parents=True, exist_ok=True)
     with _locked(target.with_name(target.name + ".lock")):
         if target.is_dir() and not (target / ".git").exists():
-            shutil.rmtree(target)  # a corrupt or half-deleted checkout is rebuilt instead of failing forever
+            remove_tree(target)  # a corrupt or half-deleted checkout is rebuilt instead of failing forever
         if target.is_dir():
             try:
                 _update(target, url, rev, timeout=timeout)
@@ -101,7 +123,7 @@ def materialise(url: str, rev: str | None, cache_dir: Path, *, fetch: bool = Tru
 def _create(target: Path, url: str, rev: str | None, *, timeout: int) -> None:
     tmp = target.with_name(target.name + ".tmp")
     if tmp.exists():
-        shutil.rmtree(tmp)
+        remove_tree(tmp)
     tmp.mkdir(parents=True)
     done = False
     try:
@@ -111,7 +133,7 @@ def _create(target: Path, url: str, rev: str | None, *, timeout: int) -> None:
         done = True
     finally:
         if not done:
-            shutil.rmtree(tmp, ignore_errors=True)
+            remove_tree(tmp, ignore_errors=True)
     os.replace(tmp, target)
 
 
@@ -248,4 +270,4 @@ def _file_unlock(fd: int) -> None:
         fcntl.flock(fd, fcntl.LOCK_UN)
 
 
-__all__ = ["GIT_ENV", "SourceError", "cache_key", "git_available", "materialise"]
+__all__ = ["GIT_ENV", "SourceError", "cache_key", "git_available", "materialise", "remove_tree"]

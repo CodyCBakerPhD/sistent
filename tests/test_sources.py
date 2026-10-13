@@ -14,6 +14,7 @@ import pytest
 from sistent.config import RepoSpec
 from sistent.repository import Repository
 from sistent.sources import SourceError, cache_key, git_available, materialise, resolve
+from sistent.sources.git import remove_tree
 from tests.conftest import git, requires_git
 
 pytestmark = requires_git
@@ -294,14 +295,27 @@ def test_tag_rev_is_not_taken_for_a_branch(bare_git_repo: MakeRemote, tmp_path: 
     assert probe_branch(branch_repo, RepoHints(name="sat", rev="main")) == {"branch": "main"}
 
 
+def test_remove_tree_handles_read_only_entries(tmp_path: Path) -> None:
+    import stat
+
+    locked = tmp_path / "tree" / "locked"
+    locked.mkdir(parents=True)
+    (locked / "object").write_text("x")
+    (locked / "object").chmod(stat.S_IREAD)
+    locked.chmod(stat.S_IREAD | stat.S_IEXEC)
+    remove_tree(tmp_path / "tree")
+    assert not (tmp_path / "tree").exists()
+    remove_tree(tmp_path / "absent", ignore_errors=True)
+    with pytest.raises(OSError):
+        remove_tree(tmp_path / "absent")
+
+
 @requires_git
 def test_corrupt_cached_checkout_is_rebuilt(bare_git_repo: MakeRemote, tmp_path: Path) -> None:
-    import shutil
-
     url = bare_git_repo({"README.md": "hello\n"})
     cache = tmp_path / "cache"
     target = materialise(url, None, cache)
-    shutil.rmtree(target / ".git")
+    remove_tree(target / ".git")  # git object files are read-only on Windows
     (target / "README.md").write_text("tampered")
     rebuilt = materialise(url, None, cache)
     assert rebuilt == target
