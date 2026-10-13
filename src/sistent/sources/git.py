@@ -46,10 +46,8 @@ def remove_tree(path: Path, *, ignore_errors: bool = False) -> None:
 
     def _make_writable_and_retry(func: Callable[[str], object], failed: str, _exc: object) -> None:
         for candidate in (Path(failed), Path(failed).parent):
-            try:
+            with contextlib.suppress(OSError):
                 os.chmod(candidate, os.stat(candidate).st_mode | stat.S_IWRITE)
-            except OSError:
-                pass
         func(failed)
 
     try:
